@@ -2,7 +2,7 @@
 //  Storage.cpp  -  LittleFS persistence
 //
 //  NOTE: In Arduino IDE select a Flash Size with a filesystem partition, e.g.
-//  Tools -> Flash Size -> "2MB (Sketch: 1MB, FS: 1MB)" for a Raspberry Pi Pico.
+//  Tools -> Flash Size -> "4MB (Sketch: 2MB, FS: 2MB)" for a Raspberry Pi Pico 2.
 // ============================================================================
 #include "Storage.h"
 #include <LittleFS.h>

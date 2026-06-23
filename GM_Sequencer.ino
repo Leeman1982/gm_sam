@@ -1,10 +1,10 @@
 // ============================================================================
 //  GM_Sequencer.ino  -  Dual-core GM step sequencer for the Dream SAM2695
 //
-//  Target : Raspberry Pi Pico (RP2040), Earle Philhower arduino-pico core.
-//  Build  : select your Pico board, set Flash Size to a layout WITH a
-//           filesystem partition (e.g. "2MB (Sketch 1MB / FS 1MB)") so song
-//           save/load works. Install the "U8g2" library.
+//  Target : Raspberry Pi Pico 2 (RP2350), Earle Philhower arduino-pico core (>=4.0.1).
+//  Build  : select "Raspberry Pi Pico 2", set Flash Size to a 4MB layout WITH a
+//           filesystem partition (e.g. "Sketch 2MB / FS 2MB") so song save/load
+//           works. Install the "U8g2" library.
 //
 //  CORE SPLIT
 //    core0 : UI (SH1106) + encoder/buttons + LittleFS storage.

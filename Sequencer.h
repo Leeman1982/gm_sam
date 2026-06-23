@@ -9,7 +9,7 @@
 //                     into MIDI messages and drives the transport.
 //
 //  All shared reads/writes are single 8/16-bit aligned scalars, which are
-//  atomic on the Cortex-M0+, so the audio-rate path never has to take a lock.
+//  atomic on the Cortex-M33, so the audio-rate path never has to take a lock.
 // ============================================================================
 #pragma once
 #include <Arduino.h>
@@ -23,7 +23,7 @@ struct Step {
   uint8_t gate;     // 1..100  (% of step length)
   uint8_t prob;     // 0..100  (% chance to fire)
   int8_t  micro;    // -12..+12 ticks of micro-timing
-  uint8_t tie;      // 0/1  (hold across the step boundary)
+  uint8_t _rsvd;    // reserved (was 'tie'); kept so Song layout / save format is stable
   uint8_t _pad;
 };
 
@@ -67,6 +67,8 @@ public:
   volatile uint8_t reqPanic     = 0;
   volatile uint8_t reqGmReset   = 0;   // re-send GM reset + all settings
   volatile uint8_t reqResendAll = 0;   // force full reconcile (after load)
+  volatile uint8_t reqQuiesce   = 0;   // core0 -> core1: park, don't read `data`
+  volatile uint8_t quiesced     = 0;   // core1 -> core0: parked, safe to swap `data`
   volatile uint8_t isRunning    = 0;   // engine -> UI transport state
 
   // audition (preview a note from the UI)
@@ -127,6 +129,9 @@ public:
 
   // clearing
   void clearTrack(uint8_t t);
+
+  // whole-song load (core0): stop transport, quiesce the engine, swap `data` race-free
+  void loadSong(const Song& src);
 
 private:
   // ---- engine-owned timing state (core1 only) ----

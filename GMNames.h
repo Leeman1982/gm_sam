@@ -1,7 +1,7 @@
 // ============================================================================
 //  GMNames.h  -  General MIDI instrument & percussion name tables
 //
-//  Stored in flash (PROGMEM) on the RP2040 so they cost no RAM.
+//  Stored in the Pico's memory-mapped flash (PROGMEM) so they cost no RAM.
 //  Use gmInstrumentName(p) and gmDrumName(note) to read into a small buffer.
 //
 //  The Dream SAM2695 follows the GM1 program map for channels 1-9,11-16 and

@@ -101,18 +101,15 @@ static void auditionCurrent() {
 //  INPUT  (called every core0 loop)
 // ---------------------------------------------------------------------------
 static void doLoad() {
-  seq.stop();
-  uint32_t t0 = millis();
-  while (seq.running() && (millis() - t0) < 80) delay(2);
+  // Read the file into a local copy first; touch no shared state unless it succeeds.
   Song tmp;
-  if (Storage::load(slotSel, tmp)) {
-    seq.data = tmp;            // single memcpy; engine is stopped
-    seq.resendAll();
-    clampCursors();
-    char m[22]; snprintf(m, sizeof(m), "LOADED slot %d", slotSel + 1); toast(m);
-  } else {
+  if (!Storage::load(slotSel, tmp)) {
     char m[22]; snprintf(m, sizeof(m), "EMPTY slot %d", slotSel + 1); toast(m);
+    return;
   }
+  seq.loadSong(tmp);         // stops transport, parks core1, then swaps the Song race-free
+  clampCursors();
+  char m[22]; snprintf(m, sizeof(m), "LOADED slot %d", slotSel + 1); toast(m);
 }
 
 static void handleRotate(int d, bool shift) {

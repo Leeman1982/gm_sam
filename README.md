@@ -1,6 +1,6 @@
-# GM Sequencer — RP2040 + Dream SAM2695
+# GM Sequencer — RP2350 (Pico 2) + Dream SAM2695
 
-A professional dual-core MIDI step sequencer for the Raspberry Pi Pico (RP2040)
+A professional dual-core MIDI step sequencer for the Raspberry Pi Pico 2 (RP2350)
 that drives a Dream **SAM2695** General-MIDI module (the AliExpress "GM 2.0
 synthesis module"). 16 tracks, 64 steps, per-step micro-timing/probability,
 rock-solid drift-free timing, and a clear SH1106 OLED UI.
@@ -19,16 +19,19 @@ Two cores, no locks in the audio path:
 
 - **core1 — engine.** Owns all timing and is the *only* core that touches the
   MIDI UART. Internal resolution is **96 PPQN** with a drift-free integer tick
-  accumulator (no floats in the hot loop). Emits MIDI clock (0xF8) on the
+  accumulator (no floats in the hot loop — the RP2350's M33 has an FPU, but
+  integer timing stays bit-exact and drift-free, so it isn't needed). Emits MIDI clock (0xF8) on the
   24-PPQN grid plus Start/Stop/Continue — the foundation for future external
   sync. An event scheduler handles note on/off with swing and per-step micro
   offsets (offs fire before ons at the same tick).
 - **core0 — UI.** SH1106 rendering (~30 fps), encoder + buttons, and LittleFS
   song storage.
 
-Cross-core sharing uses single aligned 8/16-bit scalars (atomic on the M0+) and
+Cross-core sharing uses single aligned 8/16-bit scalars (atomic on the M33) and
 volatile request flags. Setting changes are reconciled to MIDI each engine pass,
-so edits are audible immediately.
+so edits are audible immediately. Loading a song is the one whole-struct swap, so
+it briefly parks the engine with a quiesce handshake before the copy — playback
+itself stays lock-free.
 
 ---
 
@@ -36,6 +39,12 @@ so edits are audible immediately.
 
 All buttons and the encoder are **active-low** with internal pull-ups — wire the
 common side to **GND**.
+
+The Pico 2 (RP2350A) is **pin-compatible** with the original Pico, so every pin
+below is unchanged. The active-low + internal-pull-up scheme also sidesteps RP2350
+erratum **E9**: that GPIO input-latch issue affects internal *pull-downs*, but here
+every input is pulled **up** and its switch hard-drives it to GND, so reads stay
+clean — no external resistors needed.
 
 | Signal            | Pico pin | Notes                                        |
 |-------------------|----------|----------------------------------------------|
@@ -60,9 +69,10 @@ it expects an opto-isolated/standard MIDI input.
 ### Using an Arduino-style MIDI shield (DIN-5 IN/OUT/THRU)
 
 A generic opto-isolated MIDI shield gives you proper DIN-5 sockets; drive the
-SAM2695 from its MIDI OUT. Wire it by **function**, not by the silkscreen pin
-number — these shields use the Arduino convention where pad 0 = RX and pad 1 =
-TX, and MIDI OUT is driven by the TX (D1) pad:
+SAM2695 from its MIDI OUT. These are **Uno form-factor** boards, so they do **not**
+plug onto a Pico 2 — hand-wire them by **function**, not by the silkscreen pin
+number. They use the Arduino convention where pad 0 = RX and pad 1 = TX, and MIDI
+OUT is driven by the TX (D1) pad:
 
 | Pico pin     | Shield pad            | Why                                  |
 |--------------|-----------------------|--------------------------------------|
@@ -71,26 +81,29 @@ TX, and MIDI OUT is driven by the TX (D1) pad:
 | 3V3          | shield 3V3 / VCC pad  | see warning below                    |
 | GND          | shield GND            | common ground                        |
 
-**Power the shield from 3V3, not 5V.** The RP2040 is *not* 5V-tolerant. The
-shield's MIDI-IN opto output idles at the shield's VCC; at 5V that line would
-over-volt GP1 when you connect the sync-in. Running the shield at 3V3 keeps the
-RX line safe and still drives MIDI OUT fine.
+**Prefer a 3.3 V-native shield** (run its VCC from the Pico 2's 3V3 pin) — this is
+the cleanest option and needs no level-shifting. The RP2350 is *not* 5V-tolerant: a
+shield's MIDI-IN opto output idles at the shield's VCC, so at 5 V that line would
+over-volt GP1 when you wire the sync-in. At 3.3 V the RX line stays safe and MIDI
+OUT still drives the SAM2695 fine. If you only have a 5 V-only shield, powering it
+from 3V3 is the fallback that keeps GP1 safe.
 
-The shield's RX enable switch (often "S2") only connects/disconnects MIDI IN
-from the RX pin — it has no effect on MIDI OUT or playback. Leave it in the
-connected position only when you wire up sync-in. If you get silence on OUT,
-the most likely cause is GP0 landing on the RX pad instead of the TX pad.
+The shield's **RX-enable switch** (the ON/OFF slider, sometimes labelled "S2") only
+connects/disconnects MIDI IN from the RX pin — it has no effect on MIDI OUT or
+playback. Leave it ON only when you wire up the GP1 sync-in. If you get silence on
+OUT, the most likely cause is GP0 landing on the RX pad instead of the TX pad.
 
 ---
 
 ## Arduino IDE setup
 
-1. Install the **arduino-pico** core (Earle Philhower). Boards Manager URL:
+1. Install the **arduino-pico** core (Earle Philhower), **v4.0.1 or newer** (the
+   release that added RP2350 / Pico 2 support). Boards Manager URL:
    `https://github.com/earlephilhower/arduino-pico/releases/download/global/package_rp2040_index.json`
 2. Install the **U8g2** library (Library Manager).
-3. Select your Pico board.
-4. **Flash Size:** choose a layout that includes a filesystem, e.g.
-   *"2MB (Sketch 1MB / FS 1MB)"*. Song save/load needs the FS partition.
+3. Select **Raspberry Pi Pico 2** (Tools → Board).
+4. **Flash Size:** choose a 4 MB layout that includes a filesystem, e.g.
+   *"Sketch 2MB / FS 2MB"*. Song save/load needs the FS partition.
 5. Open `GM_Sequencer.ino` (keep all files in the same folder) and upload.
 
 ---
@@ -137,8 +150,7 @@ The status bar shows page, track, MIDI channel, mute/solo flag, transport
 
 - 16 tracks (the GM channel ceiling; track 10 → channel 10 = drums).
 - Up to 64 steps per track, independent per-track length (polymeter).
-- Per step: on/off, note, velocity, gate %, probability %, ±12-tick micro-timing,
-  tie.
+- Per step: on/off, note, velocity, gate %, probability %, ±12-tick micro-timing.
 - Swing, selectable grid resolution, 20–300 BPM, drift-free 96-PPQN timing.
 - Full SAM2695 control: program/bank, volume, pan, reverb/chorus sends, global
   reverb/chorus type, master volume, GM reset.

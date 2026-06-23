@@ -1,7 +1,7 @@
 // ============================================================================
 //  Config.h  -  Pin map, hard limits and enums for the GM Sequencer
 //
-//  Target : Raspberry Pi Pico (RP2040) with Earle Philhower arduino-pico core.
+//  Target : Raspberry Pi Pico 2 (RP2350), Earle Philhower arduino-pico core (>=4.0.1).
 //  Synth  : Dream SAM2695 GM module, serial MIDI in @ 31250 baud (TTL).
 //  Display: SH1106 1.3" 128x64 I2C OLED on I2C0 (U8g2 library).
 // ============================================================================
@@ -9,7 +9,7 @@
 #include <Arduino.h>
 
 // ---------------------------------------------------------------------------
-//  PIN MAP  (all GPIO numbers are RP2040 "GPxx")
+//  PIN MAP  (RP2350 / Pico 2 "GPxx"; pinout is identical to the original Pico)
 // ---------------------------------------------------------------------------
 // MIDI -- Serial1 / UART0.  TX goes to the SAM2695 module's MIDI-IN / RX pad.
 // RX is reserved for a FUTURE external clock-sync input (MIDI IN from a master).
