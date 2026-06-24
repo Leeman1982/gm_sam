@@ -7,7 +7,7 @@
 //           works. Install the "U8g2" library.
 //
 //  CORE SPLIT
-//    core0 : UI (SH1106) + encoder/buttons + LittleFS storage.
+//    core0 : UI (SSD1309 OLED) + encoder/buttons + LittleFS storage.
 //    core1 : real-time transport + the ONLY core that drives the MIDI UART.
 //  The two cores share state through the single global `seq` instance using
 //  atomic scalar fields and volatile request flags (see Sequencer.h).
@@ -35,7 +35,7 @@ void setup() {
 
   Storage::begin();           // mount LittleFS (formats on first run)
   Controls::begin();          // encoder interrupts + button pins
-  UI::begin();                // I2C + SH1106
+  UI::begin();                // I2C + SSD1309 OLED
 }
 
 void loop() {

@@ -1,5 +1,5 @@
 // ============================================================================
-//  UI.cpp  -  SH1106 OLED rendering + input handling (core0)
+//  UI.cpp  -  SSD1309 OLED rendering + input handling (core0)
 // ============================================================================
 #include "UI.h"
 #include <Wire.h>
@@ -10,9 +10,12 @@
 #include "Storage.h"
 #include "GMNames.h"
 
-// ---- Display object (SH1106, hardware I2C, full frame buffer) --------------
-// Matches the tested setup: SH1106 128x64, U8g2, HW I2C on Wire (I2C0).
-static U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
+// ---- Display object (SSD1309 2.42" 128x64, hardware I2C, full frame buffer) -
+// Panel: 2.42" 128x64 OLED, SSD1309 controller, I2C @ 0x3C (U8g2, HW I2C / I2C0).
+// If the image is shifted or garbled, try the NONAME2 init, or the SSD1306
+// constructor (SSD1309 is largely register-compatible with SSD1306):
+//   U8G2_SSD1309_128X64_NONAME2_F_HW_I2C  /  U8G2_SSD1306_128X64_NONAME_F_HW_I2C
+static U8G2_SSD1309_128X64_NONAME0_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
 
 namespace UI {
 
@@ -433,7 +436,7 @@ static void drawToast() {
 //  PUBLIC
 // ---------------------------------------------------------------------------
 void begin() {
-  // I2C pins per the tested SH1106 setup (must precede u8g2.begin()).
+  // I2C pins for the SSD1309 panel (must precede u8g2.begin()).
   Wire.setSDA(PIN_OLED_SDA);
   Wire.setSCL(PIN_OLED_SCL);
   Wire.begin();

@@ -3,7 +3,7 @@
 A professional dual-core MIDI step sequencer for the Raspberry Pi Pico 2 (RP2350)
 that drives a Dream **SAM2695** General-MIDI module (the AliExpress "GM 2.0
 synthesis module"). 16 tracks, 64 steps, per-step micro-timing/probability,
-rock-solid drift-free timing, and a clear SH1106 OLED UI.
+rock-solid drift-free timing, and a clear SSD1309 OLED UI.
 
 The SAM2695 is a 64-voice GM/GS/MT-32 synth-on-a-chip with onboard reverb +
 chorus and a 4-band EQ, controlled over standard serial MIDI at 31250 baud.
@@ -24,7 +24,7 @@ Two cores, no locks in the audio path:
   24-PPQN grid plus Start/Stop/Continue — the foundation for future external
   sync. An event scheduler handles note on/off with swing and per-step micro
   offsets (offs fire before ons at the same tick).
-- **core0 — UI.** SH1106 rendering (~30 fps), encoder + buttons, and LittleFS
+- **core0 — UI.** SSD1309 rendering (~30 fps), encoder + buttons, and LittleFS
   song storage.
 
 Cross-core sharing uses single aligned 8/16-bit scalars (atomic on the M33) and

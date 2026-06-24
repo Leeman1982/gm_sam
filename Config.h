@@ -3,7 +3,7 @@
 //
 //  Target : Raspberry Pi Pico 2 (RP2350), Earle Philhower arduino-pico core (>=4.0.1).
 //  Synth  : Dream SAM2695 GM module, serial MIDI in @ 31250 baud (TTL).
-//  Display: SH1106 1.3" 128x64 I2C OLED on I2C0 (U8g2 library).
+//  Display: SSD1309 2.42" 128x64 I2C OLED on I2C0 (U8g2 library).
 // ============================================================================
 #pragma once
 #include <Arduino.h>
@@ -16,7 +16,7 @@
 #define PIN_MIDI_TX        0     // GP0  -> module RX  (required)
 #define PIN_MIDI_RX        1     // GP1  <- future MIDI IN for clock sync
 
-// OLED  (I2C0, matches your tested SH1106 setup guide)
+// OLED  (I2C0; SSD1309 2.42" 128x64 panel @ 0x3C)
 #define PIN_OLED_SDA       4     // GP4
 #define PIN_OLED_SCL       5     // GP5
 #define OLED_I2C_HZ        400000UL

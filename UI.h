@@ -1,5 +1,5 @@
 // ============================================================================
-//  UI.h  -  SH1106 OLED interface + input state machine (core0 only)
+//  UI.h  -  SSD1309 OLED interface + input state machine (core0 only)
 //
 //  Renders the current page with U8g2 (full-frame buffer, ~30 fps) and turns
 //  encoder / button events from Controls into edits on the global `seq`.
