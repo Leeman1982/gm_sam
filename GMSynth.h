@@ -45,4 +45,8 @@ namespace GMSynth {
   void gmReset();                          // GM-On SysEx (F0 7E 7F 09 01 F7)
   void masterVolume(uint8_t v);            // GM master volume SysEx (0..127)
 
+  // Diagnostic counter: total Note-On messages written to the UART, for an
+  // on-screen MIDI-activity indicator. Written by core1, read-only from core0.
+  extern volatile uint32_t notesSent;
+
 } // namespace GMSynth

@@ -14,6 +14,8 @@ namespace {
 
 namespace GMSynth {
 
+volatile uint32_t notesSent = 0;   // diagnostic: counts Note-On messages sent
+
 #if GM_MIDI_SELFTEST
 // Audible power-on proof-of-life (toggle via GM_MIDI_SELFTEST in Config.h): a
 // C-major arpeggio on channel 1 (piano = the GM default after reset). Hear it at
@@ -49,6 +51,7 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
   Serial1.write(st(0x90, ch));
   Serial1.write(clamp7(note));
   Serial1.write(clamp7(vel));
+  notesSent++;                     // drives the on-screen MIDI-activity dot
 }
 
 void noteOff(uint8_t ch, uint8_t note) {

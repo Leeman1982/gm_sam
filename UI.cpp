@@ -9,6 +9,7 @@
 #include "Controls.h"
 #include "Storage.h"
 #include "GMNames.h"
+#include "GMSynth.h"
 
 // ---- Display object (SSD1309 2.42" 128x64, hardware I2C, full frame buffer) -
 // Panel: 2.42" 128x64 OLED, SSD1309 controller, I2C @ 0x3C (U8g2, HW I2C / I2C0).
@@ -265,6 +266,14 @@ static void drawStatusBar() {
   else               u8g2.drawFrame(88, 1, 6, 6);        // stop = hollow square
   snprintf(buf, sizeof(buf), "%3d", seq.data.bpm);
   u8g2.drawStr(108, 7, buf);
+
+  // MIDI TX activity: this dot pulses each time a Note-On is sent to the synth.
+  // If it blinks while you play but you hear nothing, MIDI is leaving the Pico
+  // correctly -- the fault is then the S wire / level or the audio out, not code.
+  static uint32_t seenNotes = 0, pulseUntil = 0;
+  uint32_t ns = GMSynth::notesSent;
+  if (ns != seenNotes) { seenNotes = ns; pulseUntil = millis() + 150; }
+  if (millis() < pulseUntil) u8g2.drawDisc(99, 4, 2);
 
   u8g2.drawHLine(0, 9, 128);
 }
