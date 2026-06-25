@@ -46,6 +46,14 @@
 // independently of the UI / sequencer. Set back to 0 once you have sound.
 #define GM_MIDI_SELFTEST   1
 
+// USB-serial MIDI monitor. When 1, every byte transmitted on GP0 is also echoed
+// to the USB serial port as hex (open the Arduino Serial Monitor at 115200).
+// This complements the on-screen activity dot: the dot proves Note-Ons were
+// *queued*, the hex stream proves the exact bytes leaving the UART. If you see
+// bytes here but the module is silent, the firmware/UART is fine and the fault
+// is on the wire (GP0->S, common ground, or module power). Default 0.
+#define MIDI_TX_DEBUG      0
+
 // ---------------------------------------------------------------------------
 //  SEQUENCER LIMITS
 // ---------------------------------------------------------------------------
