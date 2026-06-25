@@ -39,6 +39,20 @@
 #define PIN_CLICK_OUT     14     // GP14
 
 // ---------------------------------------------------------------------------
+//  DIAGNOSTICS  (all default OFF -> zero change to normal behaviour)
+//  Turn these on to debug a "no MIDI signal on GP0" complaint.
+// ---------------------------------------------------------------------------
+// 1 = mirror every MIDI byte transmitted on GP0 to the USB serial port as hex.
+//     Open the Arduino Serial Monitor at 115200 baud: if you see bytes here but
+//     the module is silent, the firmware/UART is fine and the fault is on the
+//     wire (GP0->S, common ground, or module power).
+#define MIDI_TX_DEBUG     0
+// 1 = play a short C-major arpeggio (ch1, program 0) ~1 s after boot, before any
+//     user input, so you can confirm GP0 is toggling and the module makes sound
+//     without having to program a pattern first.
+#define MIDI_SELFTEST     0
+
+// ---------------------------------------------------------------------------
 //  SEQUENCER LIMITS
 // ---------------------------------------------------------------------------
 #define MAX_TRACKS        16     // GM/GM2 has exactly 16 MIDI channels -> 16 tracks

@@ -10,6 +10,23 @@ namespace {
     return status | (uint8_t)(ch - 1);
   }
   inline uint8_t clamp7(int v) { return (uint8_t)(v < 0 ? 0 : (v > 127 ? 127 : v)); }
+
+  // ---- single funnel for every byte that leaves on GP0 --------------------
+  // All MIDI output goes through these so the optional USB-serial monitor sees
+  // exactly what the SAM2695 sees. With MIDI_TX_DEBUG off this is a thin inline
+  // wrapper over Serial1.write() and costs nothing.
+  inline void tx(uint8_t b) {
+    Serial1.write(b);
+#if MIDI_TX_DEBUG
+    if (b >= 0x80 && b < 0xF8) Serial.println();  // start a fresh line per channel message
+    if (b < 0x10) Serial.print('0');
+    Serial.print(b, HEX);
+    Serial.print(' ');
+#endif
+  }
+  inline void tx(const uint8_t* p, size_t n) {
+    for (size_t i = 0; i < n; i++) tx(p[i]);
+  }
 }
 
 namespace GMSynth {
@@ -19,41 +36,48 @@ void begin() {
   Serial1.setRX(PIN_MIDI_RX);    // reserved for future external-sync input
   Serial1.setFIFOSize(256);      // generous TX/RX FIFO so writes never block
   Serial1.begin(31250);
+#if MIDI_TX_DEBUG
+  Serial.begin(115200);          // USB CDC: hex monitor of everything sent on GP0
+#endif
   delay(60);                     // let the SAM2695 finish power-on
   gmReset();
   delay(20);
   masterVolume(120);
+#if MIDI_SELFTEST
+  selfTest();
+#endif
 }
 
 void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
-  Serial1.write(st(0x90, ch));
-  Serial1.write(clamp7(note));
-  Serial1.write(clamp7(vel));
+  tx(st(0x90, ch));
+  tx(clamp7(note));
+  tx(clamp7(vel));
 }
 
 void noteOff(uint8_t ch, uint8_t note) {
-  Serial1.write(st(0x80, ch));
-  Serial1.write(clamp7(note));
-  Serial1.write((uint8_t)0x40);  // release velocity 64
+  tx(st(0x80, ch));
+  tx(clamp7(note));
+  tx((uint8_t)0x40);             // release velocity 64
 }
 
 void controlChange(uint8_t ch, uint8_t cc, uint8_t value) {
-  Serial1.write(st(0xB0, ch));
-  Serial1.write(clamp7(cc));
-  Serial1.write(clamp7(value));
+  tx(st(0xB0, ch));
+  tx(clamp7(cc));
+  tx(clamp7(value));
 }
 
 void programChange(uint8_t ch, uint8_t program) {
-  Serial1.write(st(0xC0, ch));
-  Serial1.write(clamp7(program));
+  tx(st(0xC0, ch));
+  tx(clamp7(program));
 }
 
 void pitchBend(uint8_t ch, int16_t bend14) {
   int v = bend14 + 8192;                 // 0..16383, centre 8192
-  if (v < 0) v = 0; if (v > 16383) v = 16383;
-  Serial1.write(st(0xE0, ch));
-  Serial1.write((uint8_t)(v & 0x7F));    // LSB
-  Serial1.write((uint8_t)((v >> 7) & 0x7F)); // MSB
+  if (v < 0) v = 0;
+  if (v > 16383) v = 16383;
+  tx(st(0xE0, ch));
+  tx((uint8_t)(v & 0x7F));               // LSB
+  tx((uint8_t)((v >> 7) & 0x7F));        // MSB
 }
 
 void bankSelect(uint8_t ch, uint8_t bankMSB) { controlChange(ch, 0,  bankMSB); }
@@ -66,10 +90,10 @@ void setChorusSend(uint8_t ch, uint8_t v)    { controlChange(ch, 93, v); }   // 
 void setReverbType(uint8_t ch, uint8_t t)    { controlChange(ch, 80, t & 7); } // CC0x50
 void setChorusType(uint8_t ch, uint8_t t)    { controlChange(ch, 81, t & 7); } // CC0x51
 
-void clockTick() { Serial1.write((uint8_t)0xF8); }
-void start()     { Serial1.write((uint8_t)0xFA); }
-void stop()      { Serial1.write((uint8_t)0xFC); }
-void cont()      { Serial1.write((uint8_t)0xFB); }
+void clockTick() { tx((uint8_t)0xF8); }
+void start()     { tx((uint8_t)0xFA); }
+void stop()      { tx((uint8_t)0xFC); }
+void cont()      { tx((uint8_t)0xFB); }
 
 void allNotesOff(uint8_t ch) { controlChange(ch, 123, 0); }
 void allSoundOff(uint8_t ch) { controlChange(ch, 120, 0); }
@@ -80,13 +104,26 @@ void panic() {
 
 void gmReset() {
   static const uint8_t sx[] = { 0xF0, 0x7E, 0x7F, 0x09, 0x01, 0xF7 };
-  Serial1.write(sx, sizeof(sx));
+  tx(sx, sizeof(sx));
 }
 
 void masterVolume(uint8_t v) {
   v = clamp7(v);
   uint8_t sx[] = { 0xF0, 0x7F, 0x7F, 0x04, 0x01, 0x00, v, 0xF7 };
-  Serial1.write(sx, sizeof(sx));
+  tx(sx, sizeof(sx));
+}
+
+// Boot-time proof-of-life: a short arpeggio on channel 1, grand piano. Lets you
+// confirm GP0 is driving the module before any pattern is programmed.
+void selfTest() {
+  programChange(1, 0);                       // acoustic grand piano
+  setVolume(1, 110);
+  static const uint8_t notes[] = { 60, 64, 67, 72 };  // C E G C
+  for (uint8_t i = 0; i < sizeof(notes); i++) {
+    noteOn(1, notes[i], 110);
+    delay(180);
+    noteOff(1, notes[i]);
+  }
 }
 
 } // namespace GMSynth
