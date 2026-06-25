@@ -114,9 +114,9 @@ The control model is identical on every page, so it becomes muscle memory:
 
 | Input              | Action                                                       |
 |--------------------|--------------------------------------------------------------|
-| Rotate encoder     | move cursor / selection                                      |
-| SHIFT + rotate     | change the value at the cursor                               |
-| Click encoder      | primary action (SEQ: toggle step · SONG: run the action row) |
+| Rotate encoder     | move cursor (menus: change the value while a row is in edit-mode) |
+| SHIFT + rotate     | change the value at the cursor (menu shortcut; no edit-mode needed) |
+| Click encoder      | SEQ: toggle step · menus: enter/exit edit on the row · SONG action rows: run |
 | SHIFT + click      | secondary (SEQ: cycle the per-step field)                    |
 | Long-press encoder | audition / preview the selected note                         |
 | PLAY               | start / stop (SHIFT = start from top)                         |
@@ -126,6 +126,11 @@ The control model is identical on every page, so it becomes muscle memory:
 
 The status bar shows page, track, MIDI channel, mute/solo flag, transport
 (filled square = running) and BPM.
+
+On the list pages (INST / MIX / FX / SONG) the encoder **click enters edit-mode**
+on the highlighted row — shown as `[value]` — so you rotate to change it and click
+again to confirm (no need to hold SHIFT; SHIFT+rotate still works as a shortcut).
+The SONG action rows (Save / Load / GM Reset) run immediately on click.
 
 ### Pages
 

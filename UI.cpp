@@ -32,6 +32,7 @@ static uint8_t mixCursor  = 0;            // 0..3
 static uint8_t fxCursor   = 0;            // 0..2
 static uint8_t songCursor = 0;            // 0..7
 static uint8_t slotSel    = 0;            // 0..NUM_SONG_SLOTS-1
+static bool    editing    = false;        // list pages: click toggles edit-mode on the selected row
 
 // Toast overlay.
 static char     toastMsg[22] = {0};
@@ -86,10 +87,10 @@ static void clampCursors() {
   if (seqCursor >= len) seqCursor = len ? len - 1 : 0;
 }
 
-static void nextPage() { currentPage = (currentPage + 1) % PAGE_COUNT; }
-static void prevPage() { currentPage = (currentPage + PAGE_COUNT - 1) % PAGE_COUNT; }
-static void nextTrack(){ currentTrack = (currentTrack + 1) % MAX_TRACKS; clampCursors(); }
-static void prevTrack(){ currentTrack = (currentTrack + MAX_TRACKS - 1) % MAX_TRACKS; clampCursors(); }
+static void nextPage() { currentPage = (currentPage + 1) % PAGE_COUNT; editing = false; }
+static void prevPage() { currentPage = (currentPage + PAGE_COUNT - 1) % PAGE_COUNT; editing = false; }
+static void nextTrack(){ currentTrack = (currentTrack + 1) % MAX_TRACKS; clampCursors(); editing = false; }
+static void prevTrack(){ currentTrack = (currentTrack + MAX_TRACKS - 1) % MAX_TRACKS; clampCursors(); editing = false; }
 
 // Audition the relevant note for the current context.
 static void auditionCurrent() {
@@ -116,15 +117,19 @@ static void doLoad() {
 }
 
 static void handleRotate(int d, bool shift) {
-  Track& tr = seq.data.tracks[currentTrack];
-  switch (currentPage) {
-    case PAGE_SEQ:
-      if (shift) seq.editStepField(currentTrack, seqCursor, tr.stepField, d);
-      else       seqCursor = (uint8_t)clampi(seqCursor + d, 0, tr.length - 1);
-      break;
+  if (currentPage == PAGE_SEQ) {
+    Track& tr = seq.data.tracks[currentTrack];
+    if (shift) seq.editStepField(currentTrack, seqCursor, tr.stepField, d);
+    else       seqCursor = (uint8_t)clampi(seqCursor + d, 0, tr.length - 1);
+    return;
+  }
 
+  // List pages: rotate moves the cursor, unless we are editing the selected row
+  // (entered via click) or SHIFT is held -- then rotate changes the value.
+  const bool edit = editing || shift;
+  switch (currentPage) {
     case PAGE_INST:
-      if (!shift) { instCursor = (uint8_t)clampi(instCursor + d, 0, 4); break; }
+      if (!edit) { instCursor = (uint8_t)clampi(instCursor + d, 0, 4); break; }
       switch (instCursor) {
         case 0: seq.setChannel(currentTrack, d); clampCursors(); break;
         case 1: seq.setProgram(currentTrack, d); break;
@@ -135,7 +140,7 @@ static void handleRotate(int d, bool shift) {
       break;
 
     case PAGE_MIX:
-      if (!shift) { mixCursor = (uint8_t)clampi(mixCursor + d, 0, 3); break; }
+      if (!edit) { mixCursor = (uint8_t)clampi(mixCursor + d, 0, 3); break; }
       switch (mixCursor) {
         case 0: seq.setVol(currentTrack, d);     break;
         case 1: seq.setPan(currentTrack, d);     break;
@@ -145,7 +150,7 @@ static void handleRotate(int d, bool shift) {
       break;
 
     case PAGE_FX:
-      if (!shift) { fxCursor = (uint8_t)clampi(fxCursor + d, 0, 2); break; }
+      if (!edit) { fxCursor = (uint8_t)clampi(fxCursor + d, 0, 2); break; }
       switch (fxCursor) {
         case 0: seq.setRevType(d);   break;
         case 1: seq.setChoType(d);   break;
@@ -154,7 +159,7 @@ static void handleRotate(int d, bool shift) {
       break;
 
     case PAGE_SONG:
-      if (!shift) { songCursor = (uint8_t)clampi(songCursor + d, 0, 7); break; }
+      if (!edit) { songCursor = (uint8_t)clampi(songCursor + d, 0, 7); break; }
       switch (songCursor) {
         case 0: seq.setBpm(d);   break;
         case 1: seq.setSwing(d); break;
@@ -162,45 +167,44 @@ static void handleRotate(int d, bool shift) {
         case 3: seq.data.clockSrc = (seq.data.clockSrc == CLK_INTERNAL)
                                     ? CLK_EXTERNAL : CLK_INTERNAL; break;
         case 4: slotSel = (uint8_t)clampi(slotSel + d, 0, NUM_SONG_SLOTS - 1); break;
-        default: break;   // action rows ignore value edits
+        default: break;   // action rows have no value
       }
       break;
   }
 }
 
-static void handleClick(bool shift) {
-  Track& tr = seq.data.tracks[currentTrack];
-  switch (currentPage) {
-    case PAGE_SEQ:
-      if (shift) {                              // cycle the per-step field
-        tr.stepField = (tr.stepField + 1) % SF_COUNT;
-        toast(kFieldName[tr.stepField]);
-      } else {
-        seq.toggleStep(currentTrack, seqCursor);
-      }
-      break;
-
-    case PAGE_INST:
-      if (instCursor == 2) seq.setBank(currentTrack);   // click also toggles bank
-      break;
-
-    case PAGE_SONG:
-      switch (songCursor) {
-        case 5: {                                       // Save
-          char m[22];
-          if (Storage::save(slotSel, seq.data))
-               snprintf(m, sizeof(m), "SAVED slot %d", slotSel + 1);
-          else snprintf(m, sizeof(m), "SAVE FAILED");
-          toast(m);
-        } break;
-        case 6: doLoad(); break;                        // Load
-        case 7: seq.gmReset(); toast("GM RESET SENT"); break;
-        default: break;
-      }
-      break;
-
+// Run a SONG-page action row (Save / Load / GM Reset).
+static void runSongAction() {
+  switch (songCursor) {
+    case 5: {                                         // Save
+      char m[22];
+      if (Storage::save(slotSel, seq.data))
+           snprintf(m, sizeof(m), "SAVED slot %d", slotSel + 1);
+      else snprintf(m, sizeof(m), "SAVE FAILED");
+      toast(m);
+    } break;
+    case 6: doLoad(); break;                          // Load
+    case 7: seq.gmReset(); toast("GM RESET SENT"); break;
     default: break;
   }
+}
+
+static void handleClick(bool shift) {
+  if (currentPage == PAGE_SEQ) {
+    Track& tr = seq.data.tracks[currentTrack];
+    if (shift) {                              // cycle the per-step field
+      tr.stepField = (tr.stepField + 1) % SF_COUNT;
+      toast(kFieldName[tr.stepField]);
+    } else {
+      seq.toggleStep(currentTrack, seqCursor);
+    }
+    return;
+  }
+
+  // List pages: SONG action rows fire immediately; every value row toggles
+  // edit-mode so a following rotate changes the value (no SHIFT needed).
+  if (currentPage == PAGE_SONG && songCursor >= 5) { editing = false; runSongAction(); return; }
+  editing = !editing;
 }
 
 void handleInput() {
@@ -268,7 +272,7 @@ static void drawStatusBar() {
 // Generic list-page row.
 struct Row { char label[12]; char value[16]; };
 
-static void drawRows(Row* rows, int n, int cursor) {
+static void drawRows(Row* rows, int n, int cursor, bool editSel) {
   const int listTop = 12, rowH = 10, visible = 5;
   int first = 0;
   if (n > visible) {
@@ -282,8 +286,14 @@ static void drawRows(Row* rows, int n, int cursor) {
     bool sel = (i == cursor);
     if (sel) { u8g2.drawBox(0, top, 128, rowH); u8g2.setDrawColor(0); }
     u8g2.drawStr(2, top + 8, rows[i].label);
-    int vw = (int)strlen(rows[i].value) * 6;
-    u8g2.drawStr(126 - vw, top + 8, rows[i].value);
+    // The selected row shows [value] while it is being edited, so it is obvious
+    // that rotating now changes the value instead of moving the cursor.
+    char out[20];
+    if (sel && editSel && rows[i].value[0])
+         snprintf(out, sizeof(out), "[%s]", rows[i].value);
+    else snprintf(out, sizeof(out), "%s", rows[i].value);
+    int vw = (int)strlen(out) * 6;
+    u8g2.drawStr(126 - vw, top + 8, out);
     if (sel) u8g2.setDrawColor(1);
   }
 }
@@ -358,7 +368,7 @@ static void renderInst() {
   strcpy(r[4].label, "Length");
   snprintf(r[4].value, sizeof(r[4].value), "%d", tr.length);
 
-  drawRows(r, 5, instCursor);
+  drawRows(r, 5, instCursor, editing);
 }
 
 static void renderMix() {
@@ -379,7 +389,7 @@ static void renderMix() {
   strcpy(r[3].label, "Chorus Snd");
   snprintf(r[3].value, sizeof(r[3].value), "%d", tr.choSend);
 
-  drawRows(r, 4, mixCursor);
+  drawRows(r, 4, mixCursor, editing);
 }
 
 static void renderFx() {
@@ -392,7 +402,7 @@ static void renderFx() {
            kChoName[seq.data.choType & 7]);
   strcpy(r[2].label, "Master Vol");
   snprintf(r[2].value, sizeof(r[2].value), "%d", seq.data.masterVol);
-  drawRows(r, 3, fxCursor);
+  drawRows(r, 3, fxCursor, editing);
 }
 
 static void renderSong() {
@@ -417,7 +427,7 @@ static void renderSong() {
   strcpy(r[6].label, "> Load");      r[6].value[0] = '\0';
   strcpy(r[7].label, "> GM Reset");  r[7].value[0] = '\0';
 
-  drawRows(r, 8, songCursor);
+  drawRows(r, 8, songCursor, editing);
 }
 
 static void drawToast() {
