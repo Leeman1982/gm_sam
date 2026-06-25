@@ -39,6 +39,14 @@
 #define PIN_CLICK_OUT     14     // GP14
 
 // ---------------------------------------------------------------------------
+//  DIAGNOSTICS
+// ---------------------------------------------------------------------------
+// Power-on MIDI self-test. When 1, the engine plays a short C-major arpeggio on
+// channel 1 right after MIDI init, so you can confirm the link to the SAM2695
+// independently of the UI / sequencer. Set back to 0 once you have sound.
+#define GM_MIDI_SELFTEST   1
+
+// ---------------------------------------------------------------------------
 //  SEQUENCER LIMITS
 // ---------------------------------------------------------------------------
 #define MAX_TRACKS        16     // GM/GM2 has exactly 16 MIDI channels -> 16 tracks

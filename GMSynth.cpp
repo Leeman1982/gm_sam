@@ -14,6 +14,22 @@ namespace {
 
 namespace GMSynth {
 
+#if GM_MIDI_SELFTEST
+// Audible power-on proof-of-life (toggle via GM_MIDI_SELFTEST in Config.h): a
+// C-major arpeggio on channel 1 (piano = the GM default after reset). Hear it at
+// boot -> the MIDI link to the SAM2695 is good and the issue is pattern/transport;
+// no sound -> it is wiring / power / audio-out, not the firmware.
+static void selfTest() {
+  static const uint8_t kNotes[] = { 60, 64, 67, 72 };
+  for (uint8_t i = 0; i < 4; i++) {
+    noteOn(1, kNotes[i], 110);
+    delay(180);
+    noteOff(1, kNotes[i]);
+    delay(40);
+  }
+}
+#endif
+
 void begin() {
   Serial1.setTX(PIN_MIDI_TX);
   Serial1.setRX(PIN_MIDI_RX);    // reserved for future external-sync input
@@ -23,6 +39,10 @@ void begin() {
   gmReset();
   delay(20);
   masterVolume(120);
+#if GM_MIDI_SELFTEST
+  delay(20);
+  selfTest();                    // disable by setting GM_MIDI_SELFTEST 0 in Config.h
+#endif
 }
 
 void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
