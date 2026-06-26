@@ -46,11 +46,16 @@ namespace GMSynth {
   void allSoundOff(uint8_t ch);   // CC120
   void panic();                   // notes+sound off on all 16 channels
 
-  void gmReset();                          // GM-On SysEx (F0 7E 7F 09 01 F7)
-  void masterVolume(uint8_t v);            // GM master volume SysEx (0..127)
+  void gmReset();                          // emulated GM reset (silence + CC121)
+  void masterVolume(uint8_t v);            // native VS1053 SCI_VOL (0..127)
 
-  // Diagnostic counter: total Note-On messages written to the UART, for an
-  // on-screen MIDI-activity indicator. Written by core1, read-only from core0.
+  // Diagnostic counter: total Note-On messages sent, for an on-screen MIDI-
+  // activity indicator. Written by core1, read-only from core0.
   extern volatile uint32_t notesSent;
+
+  // Boot read-back (populated once in begin()): VS1053 chip version (4 = VS1053,
+  // 3 = VS1003, 0/15 = no SPI reply) and SCI_AUDATA (0xAC45 once RT-MIDI is live).
+  extern volatile uint16_t vsVersion;
+  extern volatile uint16_t vsAudata;
 
 } // namespace GMSynth

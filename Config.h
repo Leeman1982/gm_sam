@@ -71,6 +71,14 @@
 // on the wire (SPI pins, common ground, or module power). Default 0.
 #define MIDI_TX_DEBUG      0
 
+// One-line boot diagnostic (quiet; distinct from the noisy per-message
+// MIDI_TX_DEBUG). When 1, begin() reads the VS1053 back over SPI and prints
+// "VS1053 ver=<n> AUDATA=0x<hhhh> (RT-MIDI OK|FAIL)" once over USB serial
+// (115200). ver=4 + AUDATA=0xAC45 means SPI + chip + MIDI mode are all good, so
+// any silence is then the audio output; bad/garbage reads mean the SPI/reset
+// wiring isn't talking to the chip. Set back to 0 once you have sound.
+#define GM_VS_DIAG         1
+
 // ---------------------------------------------------------------------------
 //  SEQUENCER LIMITS
 // ---------------------------------------------------------------------------

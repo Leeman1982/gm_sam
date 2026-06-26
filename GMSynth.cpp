@@ -14,6 +14,7 @@ namespace {
   // ---- SCI registers / opcodes -----------------------------------------------
   constexpr uint8_t VS_WRITE     = 0x02;
   constexpr uint8_t VS_READ      = 0x03;
+  constexpr uint8_t SCI_STATUS   = 0x01;   // SS_VER in bits 7..4 (4 = VS1053)
   constexpr uint8_t SCI_BASS     = 0x02;
   constexpr uint8_t SCI_CLOCKF   = 0x03;
   constexpr uint8_t SCI_AUDATA   = 0x05;
@@ -52,7 +53,6 @@ namespace {
     SPI.endTransaction();
   }
 
-#if MIDI_TX_DEBUG
   uint16_t sciRead(uint8_t reg) {
     waitDreq();
     SPI.beginTransaction(SPISettings(VS_SPI_HZ_INIT, MSBFIRST, SPI_MODE0));
@@ -65,7 +65,6 @@ namespace {
     SPI.endTransaction();
     return v;
   }
-#endif
 
   // ---- "VS1053b Realtime MIDI Start" patch (vs1053b-rtmidistart, 28 words) ----
   // Loaded into instruction RAM over SCI; its final record writes 0x50 to
@@ -128,6 +127,12 @@ namespace GMSynth {
 
 volatile uint32_t notesSent = 0;   // diagnostic: counts Note-On messages sent
 
+// Boot read-back diagnostics (populated once in begin()): chip version from
+// SCI_STATUS SS_VER (4 = VS1053, 3 = VS1003, 0/15 = no SPI reply) and SCI_AUDATA
+// (0xAC45 once real-time MIDI is live). Exposed so the UI can show them too.
+volatile uint16_t vsVersion = 0xFFFF;
+volatile uint16_t vsAudata  = 0xFFFF;
+
 #if GM_MIDI_SELFTEST
 // Audible power-on proof-of-life (toggle via GM_MIDI_SELFTEST in Config.h): a
 // C-major arpeggio on channel 1 (piano = the GM default). Hear it at boot -> the
@@ -154,8 +159,8 @@ void begin() {
   SPI.setTX(PIN_VS_MOSI);
   SPI.setRX(PIN_VS_MISO);
   SPI.begin();
-#if MIDI_TX_DEBUG
-  Serial.begin(115200);          // USB CDC: hex monitor of MIDI sent over SDI
+#if (GM_VS_DIAG || MIDI_TX_DEBUG)
+  Serial.begin(115200);          // USB CDC: boot diagnostic / SDI MIDI monitor
 #endif
 
   // 1. Hardware reset: XRESET low ~10 ms, then high; wait for DREQ to rise.
@@ -176,11 +181,16 @@ void begin() {
   // 4. Load the real-time MIDI start patch (self-starts via AIADDR write).
   applyPatch(rtMidiStart, 28);
 
-#if MIDI_TX_DEBUG
-  // 5. Confirm RT-MIDI mode is live: SCI_AUDATA reads 0xAC45 (44100 Hz stereo).
-  uint16_t audata = sciRead(SCI_AUDATA);
-  Serial.print(F("VS1053 AUDATA=0x")); Serial.print(audata, HEX);
-  Serial.println(audata == 0xAC45 ? F("  (RT-MIDI OK)") : F("  (NOT in RT-MIDI mode!)"));
+  // 5. Read the chip back over SPI: chip version (SS_VER) + SCI_AUDATA. AUDATA
+  //    reads 0xAC45 (44100 Hz stereo) once real-time MIDI is live. Stored for the
+  //    UI and printed once when GM_VS_DIAG is on -- this is the decisive "is the
+  //    SPI link + chip alive?" check when there is no sound.
+  vsVersion = (uint16_t)((sciRead(SCI_STATUS) >> 4) & 0x0F);
+  vsAudata  = sciRead(SCI_AUDATA);
+#if (GM_VS_DIAG || MIDI_TX_DEBUG)
+  Serial.print(F("VS1053 ver=")); Serial.print(vsVersion);
+  Serial.print(F(" AUDATA=0x"));  Serial.print(vsAudata, HEX);
+  Serial.println(vsAudata == 0xAC45 ? F("  (RT-MIDI OK)") : F("  (RT-MIDI FAIL)"));
 #endif
 
   masterVolume(120);
