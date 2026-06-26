@@ -1,9 +1,12 @@
 // ============================================================================
-//  GMSynth.h  -  Dream SAM2695 serial-MIDI driver
+//  GMSynth.h  -  VS1053B GM-synth driver (SPI / real-time MIDI)
 //
-//  Thin, allocation-free wrapper over Serial1 (UART0 @ 31250 baud).
+//  Thin, allocation-free wrapper that brings the VS1053B up in real-time MIDI
+//  mode (software start patch) and streams 0x00-padded MIDI bytes over the SDI
+//  (XDCS) data bus. The public API below is identical to the previous SAM2695
+//  UART driver, so the sequencer/UI are unchanged.
 //  IMPORTANT: only ONE core may call these functions. In this project that is
-//  core1 (the sequencer engine). core0 never touches the UART.
+//  core1 (the sequencer engine). core0 never touches the SPI bus.
 // ============================================================================
 #pragma once
 #include <Arduino.h>
@@ -11,7 +14,8 @@
 
 namespace GMSynth {
 
-  // Bring up Serial1 on the configured pins and reset the SAM2695 to GM mode.
+  // Bring up SPI, reset the VS1053B, set the clock, and load the real-time MIDI
+  // start patch so the chip is ready to receive MIDI on the SDI bus.
   void begin();
 
   // ---- Channel voice messages (channel is 1-based, 1..16) ----

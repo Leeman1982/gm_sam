@@ -1,15 +1,16 @@
-# GM Sequencer — RP2350 (Pico 2) + Dream SAM2695
+# GM Sequencer — RP2350 (Pico 2) + VS1053B
 
 A professional dual-core MIDI step sequencer for the Raspberry Pi Pico 2 (RP2350)
-that drives a Dream **SAM2695** General-MIDI module (the AliExpress "GM 2.0
-synthesis module"). 16 tracks, 64 steps, per-step micro-timing/probability,
+that drives a **VS1053B** General-MIDI synth module (the cheap red "VS1053 MP3
+Shield" clones). 16 tracks, 64 steps, per-step micro-timing/probability,
 rock-solid drift-free timing, and a clear SSD1309 OLED UI.
 
-The SAM2695 is a 64-voice GM/GS/MT-32 synth-on-a-chip with onboard reverb +
-chorus and a 4-band EQ, controlled over standard serial MIDI at 31250 baud.
-This firmware exposes that feature set: per-track instrument/bank, volume, pan,
-reverb & chorus sends, global reverb/chorus types and master volume, plus a GM
-reset.
+The VS1053B is a 64-voice (40 sustained) GM1 + one-bank-GM2 synth-on-a-chip with
+onboard reverb. Rather than a UART MIDI port, it is driven over **SPI**: the chip
+is brought up in real-time MIDI mode with a small software start patch, then fed
+0x00-padded MIDI bytes on its SDI (data) bus. This firmware exposes the GM feature
+set: per-track instrument/bank, volume, pan, reverb & chorus sends, global
+reverb/chorus types and master volume, plus a GM reset.
 
 ---
 
@@ -18,12 +19,13 @@ reset.
 Two cores, no locks in the audio path:
 
 - **core1 — engine.** Owns all timing and is the *only* core that touches the
-  MIDI UART. Internal resolution is **96 PPQN** with a drift-free integer tick
-  accumulator (no floats in the hot loop — the RP2350's M33 has an FPU, but
-  integer timing stays bit-exact and drift-free, so it isn't needed). Emits MIDI clock (0xF8) on the
-  24-PPQN grid plus Start/Stop/Continue — the foundation for future external
-  sync. An event scheduler handles note on/off with swing and per-step micro
-  offsets (offs fire before ons at the same tick).
+  VS1053B over SPI. Internal resolution is **96 PPQN** with a drift-free integer
+  tick accumulator (no floats in the hot loop — the RP2350's M33 has an FPU, but
+  integer timing stays bit-exact and drift-free, so it isn't needed). An event
+  scheduler handles note on/off with swing and per-step micro offsets (offs fire
+  before ons at the same tick). The transport/clock-out hooks are no-ops on the
+  VS1053 (it's an internal synth with no MIDI-OUT port), but remain in the API for
+  a future external-sync output.
 - **core0 — UI.** SSD1309 rendering (~30 fps), encoder + buttons, and LittleFS
   song storage.
 
@@ -48,8 +50,13 @@ clean — no external resistors needed.
 
 | Signal            | Pico pin | Notes                                        |
 |-------------------|----------|----------------------------------------------|
-| MIDI TX → module  | GP0      | UART0 TX to the SAM2695 MIDI-IN / RX pad     |
-| MIDI RX (future)  | GP1      | reserved for external clock-sync input       |
+| VS1053 SCK        | GP2      | SPI0 SCLK                                     |
+| VS1053 MOSI (SI)  | GP3      | SPI0 TX                                       |
+| VS1053 MISO (SO)  | GP0      | SPI0 RX                                       |
+| VS1053 XCS        | GP1      | SCI (command) chip-select                     |
+| VS1053 XDCS       | GP15     | SDI (data) chip-select                        |
+| VS1053 DREQ       | GP16     | data-request, input to the Pico               |
+| VS1053 XRESET     | GP17     | active-low reset, Pico drives it high         |
 | OLED SDA          | GP4      | I2C0                                          |
 | OLED SCL          | GP5      | I2C0, 400 kHz                                 |
 | Encoder A         | GP6      | quadrature (interrupt-driven)                 |
@@ -62,36 +69,32 @@ clean — no external resistors needed.
 | MUTE button       | GP13     | mute (SHIFT = solo)                           |
 | CLICK OUT (future)| GP14     | reserved analog gate-sync pulse               |
 
-Power the SAM2695 and OLED per their own requirements; share a common ground
-with the Pico. Add a series resistor on the MIDI line per the module's docs if
-it expects an opto-isolated/standard MIDI input.
+The VS1053B core logic is **3.3 V**, so it wires directly to the Pico 2 with **no
+level shifting**. Feed the module 5 V on its VIN/5V pin (it has its own regulator)
+and share ground with the Pico. The on-board microSD shares the SPI bus but has its
+own CARD-CS — leave it unconnected for pure MIDI use. Pin assignments live in
+`Config.h` (`PIN_VS_*`); SCK/MOSI/MISO must stay within a valid arduino-pico SPI0
+pin group if you change them.
 
-### Using an Arduino-style MIDI shield (DIN-5 IN/OUT/THRU)
+### How the VS1053B is brought up (SPI real-time MIDI)
 
-A generic opto-isolated MIDI shield gives you proper DIN-5 sockets; drive the
-SAM2695 from its MIDI OUT. These are **Uno form-factor** boards, so they do **not**
-plug onto a Pico 2 — hand-wire them by **function**, not by the silkscreen pin
-number. They use the Arduino convention where pad 0 = RX and pad 1 = TX, and MIDI
-OUT is driven by the TX (D1) pad:
+On the cheap red clone shields the hardware GPIO0/GPIO1 "MIDI mode" strap is tied
+low through 100k and not broken out, so the firmware enables MIDI **in software**:
 
-| Pico pin     | Shield pad            | Why                                  |
-|--------------|-----------------------|--------------------------------------|
-| GP0 (TX)     | "1 / TX" pad          | drives MIDI OUT (→ SAM2695 MIDI IN)  |
-| GP1 (RX)     | "0 / RX" pad          | opto output (future clock sync-in)   |
-| 3V3          | shield 3V3 / VCC pad  | see warning below                    |
-| GND          | shield GND            | common ground                        |
+1. **Hardware reset** — pulse XRESET low, wait for DREQ to rise.
+2. **Clock multiplier** — write `SCI_CLOCKF` (`VS_CLOCKF`, default 3.0×) *before*
+   loading the patch; raise to 3.5×/4.0× for more polyphony/reverb headroom.
+3. **Load the start patch** — the 28-word `vs1053b-rtmidistart` plugin is written
+   into instruction RAM; its last record auto-starts real-time MIDI mode.
+4. **Stream MIDI over SDI** — each MIDI byte is sent as `0x00` + byte (the
+   datasheet's "pad with 0xFF" is a known error). SPI runs slow during init, fast
+   for note streaming, and every op waits on DREQ.
 
-**Prefer a 3.3 V-native shield** (run its VCC from the Pico 2's 3V3 pin) — this is
-the cleanest option and needs no level-shifting. The RP2350 is *not* 5V-tolerant: a
-shield's MIDI-IN opto output idles at the shield's VCC, so at 5 V that line would
-over-volt GP1 when you wire the sync-in. At 3.3 V the RX line stays safe and MIDI
-OUT still drives the SAM2695 fine. If you only have a 5 V-only shield, powering it
-from 3V3 is the fallback that keeps GP1 safe.
-
-The shield's **RX-enable switch** (the ON/OFF slider, sometimes labelled "S2") only
-connects/disconnects MIDI IN from the RX pin — it has no effect on MIDI OUT or
-playback. Leave it ON only when you wire up the GP1 sync-in. If you get silence on
-OUT, the most likely cause is GP0 landing on the RX pad instead of the TX pad.
+Master volume uses the chip's native `SCI_VOL` register (no SysEx), and GM-Reset is
+emulated with All-Sound-Off / All-Notes-Off / Reset-All-Controllers because the
+VS1053 ROM MIDI parser does not skip SysEx. Set `MIDI_TX_DEBUG 1` in `Config.h` to
+print the boot `SCI_AUDATA` check (expect `0xAC45` = RT-MIDI live) and a hex trace
+of every MIDI message over USB serial.
 
 ---
 
@@ -100,7 +103,8 @@ OUT, the most likely cause is GP0 landing on the RX pad instead of the TX pad.
 1. Install the **arduino-pico** core (Earle Philhower), **v4.0.1 or newer** (the
    release that added RP2350 / Pico 2 support). Boards Manager URL:
    `https://github.com/earlephilhower/arduino-pico/releases/download/global/package_rp2040_index.json`
-2. Install the **U8g2** library (Library Manager).
+2. Install the **U8g2** library (Library Manager). The VS1053 driver uses only the
+   built-in **SPI** library — no extra VS1053 library is required.
 3. Select **Raspberry Pi Pico 2** (Tools → Board).
 4. **Flash Size:** choose a 4 MB layout that includes a filesystem, e.g.
    *"Sketch 2MB / FS 2MB"*. Song save/load needs the FS partition.
@@ -144,7 +148,8 @@ The SONG action rows (Save / Load / GM Reset) run immediately on click.
   drum-kit name on ch 10), Bank (GM / MT-32), Octave (−3…+3), Length.
 - **MIX** — Volume (CC7), Pan (CC10, shown L/C/R), Reverb send (CC91), Chorus
   send (CC93).
-- **FX** — global Reverb type (0–7), Chorus type (0–7), Master Volume (GM SysEx).
+- **FX** — global Reverb type (0–7), Chorus type (0–7), Master Volume (native
+  VS1053 `SCI_VOL`).
 - **SONG** — BPM (20–300), Swing (0–75%), Resolution (steps/beat: 1,2,3,4,6,8),
   Clock source (INT / EXT-reserved), Slot (1–8, `*` = used), then the action
   rows **Save**, **Load**, **GM Reset** (navigate to one and click).
@@ -157,11 +162,11 @@ The SONG action rows (Save / Load / GM Reset) run immediately on click.
 - Up to 64 steps per track, independent per-track length (polymeter).
 - Per step: on/off, note, velocity, gate %, probability %, ±12-tick micro-timing.
 - Swing, selectable grid resolution, 20–300 BPM, drift-free 96-PPQN timing.
-- Full SAM2695 control: program/bank, volume, pan, reverb/chorus sends, global
+- Full VS1053B GM control: program/bank, volume, pan, reverb/chorus sends, global
   reverb/chorus type, master volume, GM reset.
 - 8 song slots in flash (LittleFS).
-- MIDI clock + transport output already emitted, ready for syncing external
-  gear; GP1/GP14 reserved for future clock-in and analog click-out.
+- Driven over SPI in real-time MIDI mode (software start patch, SDI streaming);
+  GP14 reserved for a future analog click-out.
 
 ---
 

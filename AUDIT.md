@@ -1,3 +1,17 @@
+> **Update — synth backend migrated to VS1053B (SPI).** The SAM2695 module was
+> damaged and replaced with a VS1053B, which is driven over **SPI** (real-time
+> MIDI patch + SDI streaming) instead of UART. The audit below was written for the
+> SAM2695 UART path; sections 1–4 (message-byte correctness, note/event flow) still
+> hold because the `GMSynth` public API and message construction are unchanged. The
+> transport-layer specifics now differ: TX is SPI/SDI (not GP0 UART), `gmReset()`
+> and `masterVolume()` no longer use SysEx, and clock/transport are no-ops. The
+> three diagnostics in section 6 still apply — `GM_MIDI_SELFTEST`, the on-screen
+> `notesSent` dot, and `MIDI_TX_DEBUG` (which now prints the boot `SCI_AUDATA`
+> check, expect `0xAC45`, plus a hex trace of SDI MIDI). See README "How the
+> VS1053B is brought up" for the new wiring/bring-up.
+
+---
+
 # MIDI Signal Audit — "no MIDI reaching the GM module"
 
 Scope of the request: verify that the firmware is generating and transmitting the

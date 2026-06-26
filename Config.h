@@ -2,7 +2,7 @@
 //  Config.h  -  Pin map, hard limits and enums for the GM Sequencer
 //
 //  Target : Raspberry Pi Pico 2 (RP2350), Earle Philhower arduino-pico core (>=4.0.1).
-//  Synth  : Dream SAM2695 GM module, serial MIDI in @ 31250 baud (TTL).
+//  Synth  : VS1053B GM synth module, driven over SPI (real-time MIDI patch + SDI).
 //  Display: SSD1309 2.42" 128x64 I2C OLED on I2C0 (U8g2 library).
 // ============================================================================
 #pragma once
@@ -11,10 +11,26 @@
 // ---------------------------------------------------------------------------
 //  PIN MAP  (RP2350 / Pico 2 "GPxx"; pinout is identical to the original Pico)
 // ---------------------------------------------------------------------------
-// MIDI -- Serial1 / UART0.  TX goes to the SAM2695 module's MIDI-IN / RX pad.
-// RX is reserved for a FUTURE external clock-sync input (MIDI IN from a master).
-#define PIN_MIDI_TX        0     // GP0  -> module RX  (required)
-#define PIN_MIDI_RX        1     // GP1  <- future MIDI IN for clock sync
+// MIDI synth -- VS1053B over SPI0. The chip is brought up in real-time MIDI mode
+// (software patch) and fed 0x00-padded MIDI bytes on the SDI/XDCS data bus.
+// SCK/MOSI/MISO must be valid arduino-pico SPI0 pin groups; XCS/XDCS/DREQ/XRESET
+// are plain GPIOs.  (DREQ is an input from the chip; XRESET is driven high by us.)
+#define PIN_VS_SCK         2     // GP2  -> VS1053 SCLK
+#define PIN_VS_MOSI        3     // GP3  -> VS1053 SI  (MOSI)
+#define PIN_VS_MISO        0     // GP0  <- VS1053 SO  (MISO)
+#define PIN_VS_XCS         1     // GP1  -> VS1053 XCS  (SCI / command chip-select)
+#define PIN_VS_XDCS       15     // GP15 -> VS1053 XDCS (SDI / data chip-select)
+#define PIN_VS_DREQ       16     // GP16 <- VS1053 DREQ (data request / ready)
+#define PIN_VS_XRESET     17     // GP17 -> VS1053 XRESET (active-low; we drive high)
+
+// VS1053 clock multiplier (SCI_CLOCKF). 0x6000 = 3.0x (min for reverb, fine for
+// moderate polyphony). Raise to 0x8000 (3.5x) or 0xA000 (4.0x) for more voices /
+// reverb headroom. Keep SC_ADD = 0 so the internal clock never exceeds spec.
+#define VS_CLOCKF          0x6000
+// SPI clock: keep init slow (<= CLKI/7 at the 12.288 MHz boot clock ~1.75 MHz),
+// then run fast once SCI_CLOCKF is set and DREQ has risen.
+#define VS_SPI_HZ_INIT     1500000UL
+#define VS_SPI_HZ_RUN      8000000UL
 
 // OLED  (I2C0; SSD1309 2.42" 128x64 panel @ 0x3C)
 #define PIN_OLED_SDA       4     // GP4
@@ -46,12 +62,13 @@
 // independently of the UI / sequencer. Set back to 0 once you have sound.
 #define GM_MIDI_SELFTEST   1
 
-// USB-serial MIDI monitor. When 1, every byte transmitted on GP0 is also echoed
-// to the USB serial port as hex (open the Arduino Serial Monitor at 115200).
-// This complements the on-screen activity dot: the dot proves Note-Ons were
-// *queued*, the hex stream proves the exact bytes leaving the UART. If you see
-// bytes here but the module is silent, the firmware/UART is fine and the fault
-// is on the wire (GP0->S, common ground, or module power). Default 0.
+// USB-serial MIDI monitor. When 1, every MIDI message streamed to the VS1053 over
+// SDI is also echoed to the USB serial port as hex (open the Arduino Serial
+// Monitor at 115200), plus the boot SCI_AUDATA check (expect 0xAC45 = RT-MIDI
+// mode live). This complements the on-screen activity dot: the dot proves
+// Note-Ons were *queued*, the hex stream proves the exact bytes sent. If you see
+// bytes here but the module is silent, the firmware/SPI is fine and the fault is
+// on the wire (SPI pins, common ground, or module power). Default 0.
 #define MIDI_TX_DEBUG      0
 
 // ---------------------------------------------------------------------------
@@ -108,5 +125,5 @@ enum StepField : uint8_t {
 
 enum ClockSource : uint8_t {
   CLK_INTERNAL = 0,
-  CLK_EXTERNAL          // reserved: slave to incoming MIDI clock on PIN_MIDI_RX
+  CLK_EXTERNAL          // reserved: slave to an external MIDI clock (future input)
 };
