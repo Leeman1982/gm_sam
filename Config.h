@@ -22,6 +22,12 @@
 #define PIN_VS_XDCS       15     // GP15 -> VS1053 XDCS (SDI / data chip-select)
 #define PIN_VS_DREQ       16     // GP16 <- VS1053 DREQ (data request / ready)
 #define PIN_VS_XRESET     17     // GP17 -> VS1053 XRESET (active-low; we drive high)
+// On the red VS1053 modules an on-board microSD shares this SPI bus. Its card
+// chip-select (CARDCS/SDCS) MUST sit HIGH or the card drives MISO and corrupts
+// SCI/SDI -> the chip never enters MIDI mode (a classic "no sound"). Easiest fix
+// is to tie the module's SDCS pad to 3V3. If instead you wire it to a spare Pico
+// GPIO, put that pin here and the firmware drives it HIGH. -1 = not driven.
+#define PIN_VS_XCARDCS    (-1)
 
 // VS1053 clock multiplier (SCI_CLOCKF). 0x6000 = 3.0x (min for reverb, fine for
 // moderate polyphony). Raise to 0x8000 (3.5x) or 0xA000 (4.0x) for more voices /

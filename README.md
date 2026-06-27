@@ -92,9 +92,27 @@ low through 100k and not broken out, so the firmware enables MIDI **in software*
 
 Master volume uses the chip's native `SCI_VOL` register (no SysEx), and GM-Reset is
 emulated with All-Sound-Off / All-Notes-Off / Reset-All-Controllers because the
-VS1053 ROM MIDI parser does not skip SysEx. Set `MIDI_TX_DEBUG 1` in `Config.h` to
-print the boot `SCI_AUDATA` check (expect `0xAC45` = RT-MIDI live) and a hex trace
-of every MIDI message over USB serial.
+VS1053 ROM MIDI parser does not skip SysEx.
+
+### Troubleshooting: no sound
+
+`GM_VS_DIAG` (default 1 in `Config.h`) reads the chip back over SPI at boot and
+shows it **on the OLED** (no serial needed — works for UF2 builds):
+`ver=<n> AUDATA=<hhhh>` with `RT-MIDI: OK/FAIL`. Any button dismisses it.
+
+- **`ver=4  AUDATA=AC45  RT-MIDI: OK`** — SPI, chip, and MIDI mode are all good, so
+  the chip *is* playing the notes. The fault is the **audio output**: use the
+  module's own headphone/line jack, and make sure the headphone ground goes to the
+  VS1053 **audio ground (GBUF/AGND)**, not a digital GND. The output is line/phone
+  level — it will *not* drive a bare speaker; use headphones or a powered amp.
+- **`RT-MIDI: FAIL` / `ver=15` / `AUDATA=FFFF`** — the chip isn't answering over
+  SPI, so it never entered MIDI mode. Check **MISO→GP0**, that **XCS/XDCS aren't
+  swapped**, **XRESET→GP17 sits at ~3.3 V** (not stuck low), power, and — a classic
+  on these red modules — that the **on-board microSD card-CS (SDCS) is tied HIGH**
+  (a floating SD-CS corrupts the shared SPI bus). See `PIN_VS_XCARDCS` in `Config.h`.
+
+For a byte-level view, `MIDI_TX_DEBUG 1` additionally streams every MIDI message as
+hex over USB serial (115200). Set both flags back to 0 once you have sound.
 
 ---
 

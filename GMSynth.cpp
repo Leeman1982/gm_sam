@@ -14,6 +14,7 @@ namespace {
   // ---- SCI registers / opcodes -----------------------------------------------
   constexpr uint8_t VS_WRITE     = 0x02;
   constexpr uint8_t VS_READ      = 0x03;
+  constexpr uint8_t SCI_MODE     = 0x00;   // SM_SDINEW = 0x0800 (new-mode SDI)
   constexpr uint8_t SCI_STATUS   = 0x01;   // SS_VER in bits 7..4 (4 = VS1053)
   constexpr uint8_t SCI_BASS     = 0x02;
   constexpr uint8_t SCI_CLOCKF   = 0x03;
@@ -154,6 +155,11 @@ void begin() {
   pinMode(PIN_VS_XDCS,   OUTPUT); digitalWrite(PIN_VS_XDCS,   HIGH);
   pinMode(PIN_VS_XRESET, OUTPUT); digitalWrite(PIN_VS_XRESET, HIGH);
   pinMode(PIN_VS_DREQ,   INPUT);
+#if (PIN_VS_XCARDCS >= 0)
+  // De-select the module's on-board microSD: a floating/low CARD-CS lets the SD
+  // card drive MISO and corrupt SCI/SDI -> the VS1053 never enters MIDI mode.
+  pinMode(PIN_VS_XCARDCS, OUTPUT); digitalWrite(PIN_VS_XCARDCS, HIGH);
+#endif
 
   SPI.setSCK(PIN_VS_SCK);
   SPI.setTX(PIN_VS_MOSI);
@@ -168,6 +174,12 @@ void begin() {
   digitalWrite(PIN_VS_XRESET, HIGH);
   waitDreq();
   delay(5);
+
+  // 1b. Force new-mode SDI (SM_SDINEW). This is the power-on default, but setting
+  //     it explicitly guards against a board/clone that comes up otherwise and
+  //     keeps our dedicated-XDCS data path valid (SM_SDISHARE must stay 0).
+  sciWrite(SCI_MODE, 0x0800);
+  waitDreq();
 
   // 2. Clock multiplier BEFORE loading the patch; wait for DREQ after CLOCKF.
   sciWrite(SCI_CLOCKF, VS_CLOCKF);

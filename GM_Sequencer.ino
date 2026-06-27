@@ -36,6 +36,7 @@ void setup() {
   Storage::begin();           // mount LittleFS (formats on first run)
   Controls::begin();          // encoder interrupts + button pins
   UI::begin();                // I2C + SSD1309 OLED
+  UI::bootDiag();             // GM_VS_DIAG: show the VS1053 chip-status on the OLED
 }
 
 void loop() {

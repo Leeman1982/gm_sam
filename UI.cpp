@@ -464,6 +464,51 @@ void begin() {
   u8g2.setContrast(160);
 }
 
+// On-screen VS1053 bring-up check (for UF2 builds with no serial monitor).
+// core1 reads the chip back over SPI early in GMSynth::begin(); we wait briefly
+// for that, then show version + AUDATA so you can SEE whether real-time MIDI mode
+// actually started. ver=4 + AUDATA=AC45 => SPI+chip+MIDI good (look at audio out);
+// FAIL / garbage => SPI/reset wiring. Any button (or ~6 s) dismisses it.
+void bootDiag() {
+#if GM_VS_DIAG
+  uint32_t t0 = millis();
+  while (GMSynth::vsVersion == 0xFFFF && (millis() - t0) < 2000) delay(10);
+
+  uint16_t ver = GMSynth::vsVersion;
+  uint16_t aud = GMSynth::vsAudata;
+  bool ok = (aud == 0xAC45);
+
+  char line[24];
+  snprintf(line, sizeof(line), "ver=%u  AUDATA=%04X", (unsigned)ver, (unsigned)aud);
+
+  u8g2.clearBuffer();
+  u8g2.setFont(u8g2_font_6x10_tr);
+  u8g2.drawStr(0, 9, "VS1053 boot check");
+  u8g2.drawHLine(0, 12, 128);
+  u8g2.setFont(u8g2_font_5x7_tr);
+  u8g2.drawStr(0, 24, line);
+  u8g2.drawStr(0, 34, ok ? "RT-MIDI: OK" : "RT-MIDI: FAIL");
+  if (ok) {
+    u8g2.drawStr(0, 46, "SPI+chip OK -> check");
+    u8g2.drawStr(0, 54, "audio out / gnd");
+  } else {
+    u8g2.drawStr(0, 46, "no SPI reply - check");
+    u8g2.drawStr(0, 54, "MISO/XCS/XDCS/RESET");
+  }
+  u8g2.setFont(u8g2_font_4x6_tr);
+  u8g2.drawStr(0, 63, "any key to continue");
+  u8g2.sendBuffer();
+
+  uint32_t until = millis() + 6000;
+  while (millis() < until) {
+    Controls::update();
+    if (Controls::encClick() || Controls::playPressed() || Controls::pagePressed()
+        || Controls::trackPressed() || Controls::mutePressed()) break;
+    delay(20);
+  }
+#endif
+}
+
 void render() {
   u8g2.clearBuffer();
   drawStatusBar();
