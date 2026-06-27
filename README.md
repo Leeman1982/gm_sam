@@ -105,11 +105,18 @@ shows it **on the OLED** (no serial needed — works for UF2 builds):
   module's own headphone/line jack, and make sure the headphone ground goes to the
   VS1053 **audio ground (GBUF/AGND)**, not a digital GND. The output is line/phone
   level — it will *not* drive a bare speaker; use headphones or a powered amp.
-- **`RT-MIDI: FAIL` / `ver=15` / `AUDATA=FFFF`** — the chip isn't answering over
-  SPI, so it never entered MIDI mode. Check **MISO→GP0**, that **XCS/XDCS aren't
-  swapped**, **XRESET→GP17 sits at ~3.3 V** (not stuck low), power, and — a classic
-  on these red modules — that the **on-board microSD card-CS (SDCS) is tied HIGH**
-  (a floating SD-CS corrupts the shared SPI bus). See `PIN_VS_XCARDCS` in `Config.h`.
+- **`RT-MIDI: FAIL  ver=0  AUDATA=0000`** — all-zero reads = MISO held low = the
+  chip is **powered down or held in reset**. Per the VS1053 guide, the board has a
+  weak pull-down on XRESET: if it isn't driven high "the chip stays powered down and
+  ignores everything." Check **5V power + GND** to the module, and that
+  **XRESET→GP17 measures ~3.3 V** after boot (i.e. the reset line really reaches the
+  chip). This is the most common bring-up fault.
+- **`RT-MIDI: FAIL  AUDATA=FFFF` (or `ver=15`)** — all-one reads = MISO floating
+  high = a bus/wiring issue. Check **MISO→GP0**, that **XCS/XDCS aren't swapped**,
+  and — on modules with an SD slot — that the **microSD card-CS is HIGH** (a
+  floating SD-CS can corrupt the shared bus; tie it to 3V3 or set `PIN_VS_XCARDCS`).
+  Note the VS1053 guide says CARD-CS *can* be left unconnected for pure MIDI, so try
+  the MISO/XCS path first.
 
 For a byte-level view, `MIDI_TX_DEBUG 1` additionally streams every MIDI message as
 hex over USB serial (115200). Set both flags back to 0 once you have sound.

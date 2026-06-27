@@ -491,6 +491,14 @@ void bootDiag() {
   if (ok) {
     u8g2.drawStr(0, 46, "SPI+chip OK -> check");
     u8g2.drawStr(0, 54, "audio out / gnd");
+  } else if (aud == 0x0000) {
+    // All-zero reads = MISO held low = chip powered down or held in reset.
+    u8g2.drawStr(0, 46, "chip dead (reads 0)");
+    u8g2.drawStr(0, 54, "5V pwr? XRESET high?");
+  } else if (aud == 0xFFFF) {
+    // All-one reads = MISO floating high = wire/bus issue.
+    u8g2.drawStr(0, 46, "MISO high (floating)");
+    u8g2.drawStr(0, 54, "MISO/SD-CS/XCS wire");
   } else {
     u8g2.drawStr(0, 46, "no SPI reply - check");
     u8g2.drawStr(0, 54, "MISO/XCS/XDCS/RESET");
