@@ -43,7 +43,7 @@ void Sequencer::initDefaultSong() {
       sp.gate   = 80;
       sp.prob   = 100;
       sp.micro  = 0;
-      sp.tie    = 0;
+      sp._rsvd  = 0;
       sp._pad   = 0;
     }
   }
@@ -108,6 +108,25 @@ void Sequencer::setMasterVol(int delta){ data.masterVol = (uint8_t)clampi(data.m
 
 void Sequencer::clearTrack(uint8_t t){
   for (uint8_t s = 0; s < MAX_STEPS; s++) data.tracks[t].steps[s].active = 0;
+}
+
+// Replace the whole song from core0. The engine (core1) reads `data` every pass, so a
+// multi-KB struct copy must not run concurrently: stop the transport, park core1 with
+// the quiesce handshake, swap, then release behind a barrier so the engine observes the
+// new data before it resumes. All waits are bounded -> a stalled engine can't hang the UI.
+void Sequencer::loadSong(const Song& src) {
+  reqStop = 1;                                            // ask the engine to stop
+  uint32_t t0 = millis();
+  while (isRunning && (millis() - t0) < 80) delay(2);
+
+  reqQuiesce = 1;                                         // ask core1 to park
+  t0 = millis();
+  while (!quiesced && (millis() - t0) < 50) delay(1);     // wait for the ack
+
+  data = src;                 // safe: core1 is parked (worst case timed out -> as before)
+  reqResendAll = 1;           // re-push every setting to the synth once core1 resumes
+  __dmb();                    // release: publish the new `data` before clearing the flag
+  reqQuiesce = 0;             // release core1
 }
 
 // ===========================================================================
@@ -243,7 +262,7 @@ void Sequencer::triggerStep(uint32_t stepCount) {
       note = (uint8_t)clampi((int)sp.note + (int)tr.octave * 12, 0, 127);
     }
 
-    int gateTicks = sp.tie ? tps : ((int)sp.gate * tps) / 100;
+    int gateTicks = ((int)sp.gate * tps) / 100;
     if (gateTicks < 1) gateTicks = 1;
 
     uint32_t onTick  = gTick + (uint32_t)offset;
@@ -293,6 +312,15 @@ void Sequencer::tick() {
 }
 
 void Sequencer::engineService() {
+  // ---- load-time quiesce: park while core0 swaps the whole Song (see UI::doLoad).
+  //      Only engaged for a song load; the playback path stays lock-free. ----
+  if (reqQuiesce) {
+    quiesced = 1;                                  // tell core0 we have parked
+    while (reqQuiesce) tight_loop_contents();      // ...and stop reading `data`
+    __dmb();                                        // acquire: see core0's new `data` first
+    quiesced = 0;
+  }
+
   // ---- one-shot requests ----
   if (reqPanic)   { reqPanic = 0; flushAllOffs(); }
   if (reqGmReset) { reqGmReset = 0; GMSynth::gmReset(); delay(5); reqResendAll = 1; }

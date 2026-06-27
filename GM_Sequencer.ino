@@ -1,14 +1,14 @@
 // ============================================================================
-//  GM_Sequencer.ino  -  Dual-core GM step sequencer for the Dream SAM2695
+//  GM_Sequencer.ino  -  Dual-core GM step sequencer for the VS1053B
 //
-//  Target : Raspberry Pi Pico (RP2040), Earle Philhower arduino-pico core.
-//  Build  : select your Pico board, set Flash Size to a layout WITH a
-//           filesystem partition (e.g. "2MB (Sketch 1MB / FS 1MB)") so song
-//           save/load works. Install the "U8g2" library.
+//  Target : Raspberry Pi Pico 2 (RP2350), Earle Philhower arduino-pico core (>=4.0.1).
+//  Build  : select "Raspberry Pi Pico 2", set Flash Size to a 4MB layout WITH a
+//           filesystem partition (e.g. "Sketch 2MB / FS 2MB") so song save/load
+//           works. Install the "U8g2" library.
 //
 //  CORE SPLIT
-//    core0 : UI (SH1106) + encoder/buttons + LittleFS storage.
-//    core1 : real-time transport + the ONLY core that drives the MIDI UART.
+//    core0 : UI (SSD1309 OLED) + encoder/buttons + LittleFS storage.
+//    core1 : real-time transport + the ONLY core that drives the VS1053B (SPI).
 //  The two cores share state through the single global `seq` instance using
 //  atomic scalar fields and volatile request flags (see Sequencer.h).
 // ============================================================================
@@ -35,7 +35,8 @@ void setup() {
 
   Storage::begin();           // mount LittleFS (formats on first run)
   Controls::begin();          // encoder interrupts + button pins
-  UI::begin();                // I2C + SH1106
+  UI::begin();                // I2C + SSD1309 OLED
+  UI::bootDiag();             // GM_VS_DIAG: show the VS1053 chip-status on the OLED
 }
 
 void loop() {
@@ -51,10 +52,10 @@ void loop() {
 }
 
 // ----------------------------------------------------------------------------
-//  CORE 1  -  real-time engine (owns Serial1 / MIDI)
+//  CORE 1  -  real-time engine (owns the SPI bus / VS1053B)
 // ----------------------------------------------------------------------------
 void setup1() {
-  GMSynth::begin();                 // Serial1 @ 31250 + GM reset
+  GMSynth::begin();                 // SPI up + VS1053 reset/clock/RT-MIDI patch
   while (!g_songReady) delay(1);    // wait for core0 to initialise the song
   seq.engineBegin();                // arms timing + queues a full resend
 }

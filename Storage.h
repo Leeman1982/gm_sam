@@ -1,5 +1,5 @@
 // ============================================================================
-//  Storage.h  -  Save/load Songs to RP2040 internal flash via LittleFS.
+//  Storage.h  -  Save/load Songs to RP2350 internal flash via LittleFS.
 //                Runs on core0. Returns false on any error.
 // ============================================================================
 #pragma once
