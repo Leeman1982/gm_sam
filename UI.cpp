@@ -464,55 +464,67 @@ void begin() {
   u8g2.setContrast(160);
 }
 
-// On-screen VS1053 bring-up check (for UF2 builds with no serial monitor).
-// core1 reads the chip back over SPI early in GMSynth::begin(); we wait briefly
-// for that, then show version + AUDATA so you can SEE whether real-time MIDI mode
-// actually started. ver=4 + AUDATA=AC45 => SPI+chip+MIDI good (look at audio out);
-// FAIL / garbage => SPI/reset wiring. Any button (or ~6 s) dismisses it.
+// LIVE on-screen VS1053 bring-up check (for UF2 builds with no serial monitor).
+// core1 keeps re-attempting the bring-up (GMSynth::serviceHealth), so this screen
+// re-reads the diagnostic globals every frame: wiggle a solder joint and watch it
+// flip from FAIL to "RT-MIDI OK" the instant the chip answers. Dismisses on any
+// key, ~3 s after it comes alive, or a 60 s safety timeout.
 void bootDiag() {
 #if GM_VS_DIAG
-  uint32_t t0 = millis();
-  while (GMSynth::vsVersion == 0xFFFF && (millis() - t0) < 2000) delay(10);
+  static const char spin[4] = { '|', '/', '-', '\\' };
+  uint32_t start = millis();
+  uint32_t aliveSince = 0;
+  uint8_t  frame = 0;
 
-  uint16_t ver = GMSynth::vsVersion;
-  uint16_t aud = GMSynth::vsAudata;
-  bool ok = (aud == 0xAC45);
+  for (;;) {
+    bool     ok  = GMSynth::vsAlive;
+    uint16_t ver = GMSynth::vsVersion;
+    uint16_t aud = GMSynth::vsAudata;
 
-  char line[24];
-  snprintf(line, sizeof(line), "ver=%u  AUDATA=%04X", (unsigned)ver, (unsigned)aud);
+    char line[24], sc[2] = { spin[frame & 3], 0 };
+    snprintf(line, sizeof(line), "ver=%u  AUDATA=%04X", (unsigned)ver, (unsigned)aud);
 
-  u8g2.clearBuffer();
-  u8g2.setFont(u8g2_font_6x10_tr);
-  u8g2.drawStr(0, 9, "VS1053 boot check");
-  u8g2.drawHLine(0, 12, 128);
-  u8g2.setFont(u8g2_font_5x7_tr);
-  u8g2.drawStr(0, 24, line);
-  u8g2.drawStr(0, 34, ok ? "RT-MIDI: OK" : "RT-MIDI: FAIL");
-  if (ok) {
-    u8g2.drawStr(0, 46, "SPI+chip OK -> check");
-    u8g2.drawStr(0, 54, "audio out / gnd");
-  } else if (aud == 0x0000) {
-    // All-zero reads = MISO held low = chip powered down or held in reset.
-    u8g2.drawStr(0, 46, "chip dead (reads 0)");
-    u8g2.drawStr(0, 54, "5V pwr? XRESET high?");
-  } else if (aud == 0xFFFF) {
-    // All-one reads = MISO floating high = wire/bus issue.
-    u8g2.drawStr(0, 46, "MISO high (floating)");
-    u8g2.drawStr(0, 54, "MISO/SD-CS/XCS wire");
-  } else {
-    u8g2.drawStr(0, 46, "no SPI reply - check");
-    u8g2.drawStr(0, 54, "MISO/XCS/XDCS/RESET");
-  }
-  u8g2.setFont(u8g2_font_4x6_tr);
-  u8g2.drawStr(0, 63, "any key to continue");
-  u8g2.sendBuffer();
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_6x10_tr);
+    u8g2.drawStr(0, 9, "VS1053 live scan");
+    u8g2.drawStr(122, 9, sc);                 // spinner = re-scanning
+    u8g2.drawHLine(0, 12, 128);
+    u8g2.setFont(u8g2_font_5x7_tr);
+    u8g2.drawStr(0, 24, line);
+    if (ok) {
+      u8g2.drawStr(0, 34, "RT-MIDI: OK !");
+      u8g2.drawStr(0, 46, "working - power-");
+      u8g2.drawStr(0, 54, "cycle for clean boot");
+    } else if (aud == 0x0000) {
+      u8g2.drawStr(0, 34, "FAIL: reads 0");
+      u8g2.drawStr(0, 46, "wiggle 5V/XRESET/");
+      u8g2.drawStr(0, 54, "MISO/XCS/SCK/MOSI");
+    } else if (aud == 0xFFFF) {
+      u8g2.drawStr(0, 34, "FAIL: MISO float");
+      u8g2.drawStr(0, 46, "wiggle MISO/XCS/");
+      u8g2.drawStr(0, 54, "SD-CS wiring");
+    } else {
+      u8g2.drawStr(0, 34, "FAIL: no SPI reply");
+      u8g2.drawStr(0, 46, "wiggle MISO/XCS/");
+      u8g2.drawStr(0, 54, "XDCS/RESET wiring");
+    }
+    u8g2.setFont(u8g2_font_4x6_tr);
+    u8g2.drawStr(0, 63, "any key to continue");
+    u8g2.sendBuffer();
 
-  uint32_t until = millis() + 6000;
-  while (millis() < until) {
     Controls::update();
     if (Controls::encClick() || Controls::playPressed() || Controls::pagePressed()
         || Controls::trackPressed() || Controls::mutePressed()) break;
-    delay(20);
+
+    if (ok) {
+      if (aliveSince == 0) aliveSince = millis();
+      if (millis() - aliveSince > 3000) break;   // show OK ~3 s then continue
+    } else {
+      aliveSince = 0;
+    }
+    if (millis() - start > 60000) break;          // safety: never hang forever
+    frame++;
+    delay(120);
   }
 #endif
 }

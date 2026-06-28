@@ -53,9 +53,17 @@ namespace GMSynth {
   // activity indicator. Written by core1, read-only from core0.
   extern volatile uint32_t notesSent;
 
-  // Boot read-back (populated once in begin()): VS1053 chip version (4 = VS1053,
-  // 3 = VS1003, 0/15 = no SPI reply) and SCI_AUDATA (0xAC45 once RT-MIDI is live).
+  // Boot read-back (refreshed by begin()/serviceHealth()): VS1053 chip version
+  // (4 = VS1053, 3 = VS1003, 0/15 = no SPI reply) and SCI_AUDATA (0xAC45 once
+  // RT-MIDI is live). vsAlive is true once the chip is confirmed in RT-MIDI mode;
+  // vsJustCameAlive pulses on the dead->alive edge so the engine can resend.
   extern volatile uint16_t vsVersion;
   extern volatile uint16_t vsAudata;
+  extern volatile bool     vsAlive;
+  extern volatile bool     vsJustCameAlive;
+
+  // Call from core1's loop: while the chip isn't alive, periodically re-attempt
+  // the bring-up (drives the live OLED diagnostic + auto-recovery). No-op once up.
+  void serviceHealth();
 
 } // namespace GMSynth

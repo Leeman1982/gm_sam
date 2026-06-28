@@ -61,5 +61,10 @@ void setup1() {
 }
 
 void loop1() {
+  GMSynth::serviceHealth();          // retry VS1053 bring-up until it answers (live diag)
+  if (GMSynth::vsJustCameAlive) {    // chip just came up -> re-push all settings
+    GMSynth::vsJustCameAlive = false;
+    seq.resendAll();
+  }
   seq.engineService();              // tight real-time loop (never blocks long)
 }

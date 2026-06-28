@@ -96,9 +96,13 @@ VS1053 ROM MIDI parser does not skip SysEx.
 
 ### Troubleshooting: no sound
 
-`GM_VS_DIAG` (default 1 in `Config.h`) reads the chip back over SPI at boot and
-shows it **on the OLED** (no serial needed — works for UF2 builds):
-`ver=<n> AUDATA=<hhhh>` with `RT-MIDI: OK/FAIL`. Any button dismisses it.
+`GM_VS_DIAG` (default 1 in `Config.h`) shows a **live** VS1053 scan on the OLED at
+boot (no serial needed — works for UF2 builds): `ver=<n> AUDATA=<hhhh>` with
+`RT-MIDI: OK/FAIL` and a spinner. core1 keeps re-attempting the bring-up
+(`GMSynth::serviceHealth`), so the screen updates in real time — **wiggle a solder
+joint and watch it flip from FAIL to `RT-MIDI OK` the instant the chip answers.**
+It also auto-recovers if the module is reset/plugged in after boot. Any button
+dismisses it (it also auto-continues ~3 s after coming alive, or after 60 s).
 
 - **`ver=4  AUDATA=AC45  RT-MIDI: OK`** — SPI, chip, and MIDI mode are all good, so
   the chip *is* playing the notes. The fault is the **audio output**: use the

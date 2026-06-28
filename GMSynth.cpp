@@ -133,6 +133,8 @@ volatile uint32_t notesSent = 0;   // diagnostic: counts Note-On messages sent
 // (0xAC45 once real-time MIDI is live). Exposed so the UI can show them too.
 volatile uint16_t vsVersion = 0xFFFF;
 volatile uint16_t vsAudata  = 0xFFFF;
+volatile bool     vsAlive        = false;  // true once the chip is in RT-MIDI mode
+volatile bool     vsJustCameAlive = false; // set on the dead->alive edge (engine resends)
 
 #if GM_MIDI_SELFTEST
 // Audible power-on proof-of-life (toggle via GM_MIDI_SELFTEST in Config.h): a
@@ -149,6 +151,40 @@ static void selfTest() {
   }
 }
 #endif
+
+// One pass of the documented bring-up: hardware reset -> SM_SDINEW -> clock ->
+// volume -> load the real-time MIDI patch -> read the chip back. Updates the
+// diagnostic globals and returns true once SCI_AUDATA reads 0xAC45 (RT-MIDI live).
+// Safe to call repeatedly (pins/SPI are already configured by begin()), which is
+// what serviceHealth() does so a bad joint can be found by watching the OLED.
+static bool bringUp() {
+  // 1. Hardware reset: XRESET low ~10 ms, then high; wait for DREQ to rise.
+  digitalWrite(PIN_VS_XRESET, LOW);  delay(10);
+  digitalWrite(PIN_VS_XRESET, HIGH);
+  waitDreq();
+  delay(5);
+
+  // 1b. Force new-mode SDI (SM_SDINEW); SM_SDISHARE must stay 0 for our XDCS path.
+  sciWrite(SCI_MODE, 0x0800);
+  waitDreq();
+
+  // 2. Clock multiplier BEFORE loading the patch; wait for DREQ after CLOCKF.
+  sciWrite(SCI_CLOCKF, VS_CLOCKF);
+  waitDreq();
+  delay(2);
+
+  // 3. Clean output: moderate volume, bass/treble flat.
+  sciWrite(SCI_VOL,  0x2020);
+  sciWrite(SCI_BASS, 0x0000);
+
+  // 4. Load the real-time MIDI start patch (self-starts via AIADDR write).
+  applyPatch(rtMidiStart, 28);
+
+  // 5. Read the chip back: SS_VER (4 = VS1053) + SCI_AUDATA (0xAC45 once live).
+  vsVersion = (uint16_t)((sciRead(SCI_STATUS) >> 4) & 0x0F);
+  vsAudata  = sciRead(SCI_AUDATA);
+  return (vsAudata == 0xAC45);
+}
 
 void begin() {
   pinMode(PIN_VS_XCS,    OUTPUT); digitalWrite(PIN_VS_XCS,    HIGH);
@@ -169,47 +205,41 @@ void begin() {
   Serial.begin(115200);          // USB CDC: boot diagnostic / SDI MIDI monitor
 #endif
 
-  // 1. Hardware reset: XRESET low ~10 ms, then high; wait for DREQ to rise.
-  digitalWrite(PIN_VS_XRESET, LOW);  delay(10);
-  digitalWrite(PIN_VS_XRESET, HIGH);
-  waitDreq();
-  delay(5);
-
-  // 1b. Force new-mode SDI (SM_SDINEW). This is the power-on default, but setting
-  //     it explicitly guards against a board/clone that comes up otherwise and
-  //     keeps our dedicated-XDCS data path valid (SM_SDISHARE must stay 0).
-  sciWrite(SCI_MODE, 0x0800);
-  waitDreq();
-
-  // 2. Clock multiplier BEFORE loading the patch; wait for DREQ after CLOCKF.
-  sciWrite(SCI_CLOCKF, VS_CLOCKF);
-  waitDreq();
-  delay(2);
-
-  // 3. Clean output: moderate volume, bass/treble flat.
-  sciWrite(SCI_VOL,  0x2020);
-  sciWrite(SCI_BASS, 0x0000);
-
-  // 4. Load the real-time MIDI start patch (self-starts via AIADDR write).
-  applyPatch(rtMidiStart, 28);
-
-  // 5. Read the chip back over SPI: chip version (SS_VER) + SCI_AUDATA. AUDATA
-  //    reads 0xAC45 (44100 Hz stereo) once real-time MIDI is live. Stored for the
-  //    UI and printed once when GM_VS_DIAG is on -- this is the decisive "is the
-  //    SPI link + chip alive?" check when there is no sound.
-  vsVersion = (uint16_t)((sciRead(SCI_STATUS) >> 4) & 0x0F);
-  vsAudata  = sciRead(SCI_AUDATA);
+  vsAlive = bringUp();
 #if (GM_VS_DIAG || MIDI_TX_DEBUG)
   Serial.print(F("VS1053 ver=")); Serial.print(vsVersion);
   Serial.print(F(" AUDATA=0x"));  Serial.print(vsAudata, HEX);
-  Serial.println(vsAudata == 0xAC45 ? F("  (RT-MIDI OK)") : F("  (RT-MIDI FAIL)"));
+  Serial.println(vsAlive ? F("  (RT-MIDI OK)") : F("  (RT-MIDI FAIL)"));
 #endif
 
-  masterVolume(120);
+  if (vsAlive) {
+    masterVolume(120);
 #if GM_MIDI_SELFTEST
-  delay(20);
-  selfTest();                    // disable by setting GM_MIDI_SELFTEST 0 in Config.h
+    delay(20);
+    selfTest();                  // disable by setting GM_MIDI_SELFTEST 0 in Config.h
 #endif
+  }
+}
+
+// Called from core1's loop while the chip is NOT yet alive: re-attempts the
+// bring-up about once a second and updates the diagnostic globals. This is what
+// makes the OLED a live "wiggle a joint and watch it flip to OK" tool, and also
+// auto-recovers if the module is plugged in / reset after boot. Cheap (a flag
+// check) once the chip is alive, so it never disturbs the playing path.
+void serviceHealth() {
+  if (vsAlive) return;
+  static uint32_t lastTry = 0;
+  uint32_t now = millis();
+  if (now - lastTry < 750) return;
+  lastTry = now;
+  if (bringUp()) {
+    vsAlive = true;
+    vsJustCameAlive = true;      // the engine resends all settings on this edge
+    masterVolume(120);
+#if GM_MIDI_SELFTEST
+    selfTest();                  // audible confirmation the moment it comes alive
+#endif
+  }
 }
 
 void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
