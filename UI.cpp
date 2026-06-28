@@ -9,6 +9,7 @@
 #include "Controls.h"
 #include "Storage.h"
 #include "GMNames.h"
+#include "Synth.h"   // real patch names from the baked SoundFont
 
 // ---- Display object (SH1106, hardware I2C, full frame buffer) --------------
 // Matches the tested setup: SH1106 128x64, U8g2, HW I2C on Wire (I2C0).
@@ -344,8 +345,15 @@ static void renderInst() {
            tr.channel == DRUM_CHANNEL ? " DRM" : "");
 
   strcpy(r[1].label, "Program");
-  if (tr.channel == DRUM_CHANNEL) drumKitName(tr.program, nm, sizeof(nm));
-  else                            gmInstrumentName(tr.program, nm, sizeof(nm));
+  // Prefer the real patch name from the baked SoundFont; fall back to GM names.
+  const char* sfName = Synth::patchName(tr.channel, tr.program);
+  if (sfName && sfName[0]) {
+    strncpy(nm, sfName, sizeof(nm) - 1); nm[sizeof(nm) - 1] = '\0';
+  } else if (tr.channel == DRUM_CHANNEL) {
+    drumKitName(tr.program, nm, sizeof(nm));
+  } else {
+    gmInstrumentName(tr.program, nm, sizeof(nm));
+  }
   nm[11] = '\0';
   snprintf(r[1].value, sizeof(r[1].value), "%s", nm);
 

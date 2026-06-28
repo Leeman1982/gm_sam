@@ -1,9 +1,11 @@
 // ============================================================================
-//  GMSynth.h  -  Dream SAM2695 serial-MIDI driver
+//  GMSynth.h  -  GM voice API (compatibility front-end)
 //
-//  Thin, allocation-free wrapper over Serial1 (UART0 @ 31250 baud).
-//  IMPORTANT: only ONE core may call these functions. In this project that is
-//  core1 (the sequencer engine). core0 never touches the UART.
+//  Historically this drove an external SAM2695 over serial MIDI.  It now
+//  forwards to the ON-CHIP SoundFont synth (see GMSynth.cpp -> Synth.*), so the
+//  sequencer engine and UI did not have to change.  Reverb/chorus and MIDI
+//  real-time/transport calls are accepted but inert (no outboard module / FX).
+//  IMPORTANT: only ONE core may call these functions -- core1 (the engine).
 // ============================================================================
 #pragma once
 #include <Arduino.h>

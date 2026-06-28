@@ -2,7 +2,8 @@
 //  Config.h  -  Pin map, hard limits and enums for the GM Sequencer
 //
 //  Target : Raspberry Pi Pico (RP2040) with Earle Philhower arduino-pico core.
-//  Synth  : Dream SAM2695 GM module, serial MIDI in @ 31250 baud (TTL).
+//  Synth  : ON-CHIP SoundFont (SF2) player -- no external GM module needed.
+//           Audio is rendered in software and sent out I2S (default) or PWM.
 //  Display: SH1106 1.3" 128x64 I2C OLED on I2C0 (U8g2 library).
 // ============================================================================
 #pragma once
@@ -11,10 +12,17 @@
 // ---------------------------------------------------------------------------
 //  PIN MAP  (all GPIO numbers are RP2040 "GPxx")
 // ---------------------------------------------------------------------------
-// MIDI -- Serial1 / UART0.  TX goes to the SAM2695 module's MIDI-IN / RX pad.
-// RX is reserved for a FUTURE external clock-sync input (MIDI IN from a master).
-#define PIN_MIDI_TX        0     // GP0  -> module RX  (required)
-#define PIN_MIDI_RX        1     // GP1  <- future MIDI IN for clock sync
+// AUDIO OUT.  The old design sent serial MIDI out GP0 to an external synth
+// chip; now the Pico makes the sound itself, so GP0..GP2 carry the audio.
+//
+//   I2S mode (default, AUDIO_BACKEND_I2S): wire a small PCM5102/UDA1334 DAC.
+//     GP0 = BCLK, GP1 = LRCLK (must be BCLK+1), GP2 = DATA (DIN).
+//   PWM mode (AUDIO_BACKEND_PWM): no DAC, just an RC low-pass per channel.
+//     GP0 = LEFT, GP1 = RIGHT.  (GP2 unused.)
+#define PIN_I2S_BCLK       0     // GP0  (LRCLK is forced to GP1 by the I2S core)
+#define PIN_I2S_DATA       2     // GP2  DAC data in
+#define PIN_PWM_L          0     // GP0  PWM left  (PWM backend only)
+#define PIN_PWM_R          1     // GP1  PWM right (PWM backend only)
 
 // OLED  (I2C0, matches your tested SH1106 setup guide)
 #define PIN_OLED_SDA       4     // GP4
@@ -37,6 +45,20 @@
 // Optional analog "click out" gate pulse for syncing analog gear later.
 // Not driven in v1.0.0 but reserved so the pin won't be reused.
 #define PIN_CLICK_OUT     14     // GP14
+
+// ---------------------------------------------------------------------------
+//  ON-CHIP SOUNDFONT SYNTH
+// ---------------------------------------------------------------------------
+// Pick exactly one audio backend.  I2S sounds far better; PWM needs no DAC.
+#define AUDIO_BACKEND_I2S  1
+#define AUDIO_BACKEND_PWM  0
+
+#define AUDIO_RATE        22050  // output sample rate (Hz).  44100 is possible
+                                 // but leaves less CPU for polyphony.
+#define AUDIO_BLOCK       64     // frames rendered per pump iteration
+#define SYNTH_MAX_VOICES  16     // simultaneous sample voices (polyphony cap)
+#define SYNTH_BEND_RANGE  2      // pitch-bend range in semitones (+/-)
+#define SYNTH_HEADROOM    1      // output right-shift to leave mix headroom
 
 // ---------------------------------------------------------------------------
 //  SEQUENCER LIMITS
@@ -92,5 +114,5 @@ enum StepField : uint8_t {
 
 enum ClockSource : uint8_t {
   CLK_INTERNAL = 0,
-  CLK_EXTERNAL          // reserved: slave to incoming MIDI clock on PIN_MIDI_RX
+  CLK_EXTERNAL          // reserved: slave to an external clock source (future)
 };

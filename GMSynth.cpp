@@ -1,92 +1,63 @@
 // ============================================================================
-//  GMSynth.cpp  -  Dream SAM2695 serial-MIDI driver implementation
+//  GMSynth.cpp  -  Compatibility shim: the old external-GM driver API now
+//                  drives the ON-CHIP SoundFont synth (Synth.*).
+//
+//  Keeping this API unchanged means the sequencer engine and UI did not have
+//  to change at all -- the same noteOn/programChange/setVolume/... calls that
+//  used to be serialised out the MIDI UART now poke the software voice engine.
+//
+//  Calls that only made sense for an outboard module (MIDI real-time clock /
+//  transport bytes, reverb/chorus type & send -- there is no on-chip FX yet)
+//  are accepted but do nothing, so callers stay simple.
 // ============================================================================
 #include "GMSynth.h"
-
-namespace {
-  inline uint8_t st(uint8_t status, uint8_t ch) {  // status nibble + channel(1..16)
-    if (ch < 1)  ch = 1;
-    if (ch > 16) ch = 16;
-    return status | (uint8_t)(ch - 1);
-  }
-  inline uint8_t clamp7(int v) { return (uint8_t)(v < 0 ? 0 : (v > 127 ? 127 : v)); }
-}
+#include "Synth.h"
 
 namespace GMSynth {
 
-void begin() {
-  Serial1.setTX(PIN_MIDI_TX);
-  Serial1.setRX(PIN_MIDI_RX);    // reserved for future external-sync input
-  Serial1.setFIFOSize(256);      // generous TX/RX FIFO so writes never block
-  Serial1.begin(31250);
-  delay(60);                     // let the SAM2695 finish power-on
-  gmReset();
-  delay(20);
-  masterVolume(120);
+void begin(){ Synth::begin(); }   // Audio::begin() is started separately in the .ino
+
+void noteOn (uint8_t ch, uint8_t note, uint8_t vel){ Synth::noteOn(ch, note, vel); }
+void noteOff(uint8_t ch, uint8_t note)             { Synth::noteOff(ch, note); }
+
+void controlChange(uint8_t ch, uint8_t cc, uint8_t value){
+  switch (cc) {
+    case 1:   Synth::setExpression(ch, value); break;  // (mod -> treat softly)
+    case 7:   Synth::setVolume(ch, value);     break;
+    case 10:  Synth::setPan(ch, value);        break;
+    case 11:  Synth::setExpression(ch, value); break;
+    case 120: Synth::allSoundOff(ch);          break;
+    case 123: Synth::allNotesOff(ch);          break;
+    default: break;                                    // reverb/chorus etc: ignored
+  }
 }
 
-void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
-  Serial1.write(st(0x90, ch));
-  Serial1.write(clamp7(note));
-  Serial1.write(clamp7(vel));
-}
+void programChange(uint8_t ch, uint8_t program){ Synth::programChange(ch, program); }
+void pitchBend    (uint8_t ch, int16_t bend14) { Synth::pitchBend(ch, bend14); }
 
-void noteOff(uint8_t ch, uint8_t note) {
-  Serial1.write(st(0x80, ch));
-  Serial1.write(clamp7(note));
-  Serial1.write((uint8_t)0x40);  // release velocity 64
-}
+void bankSelect   (uint8_t ch, uint8_t bankMSB){ Synth::bankSelect(ch, bankMSB); }
+void setVolume    (uint8_t ch, uint8_t v)      { Synth::setVolume(ch, v); }
+void setPan       (uint8_t ch, uint8_t v)      { Synth::setPan(ch, v); }
+void setExpression(uint8_t ch, uint8_t v)      { Synth::setExpression(ch, v); }
+void setModulation(uint8_t ch, uint8_t v)      { (void)ch; (void)v; }
 
-void controlChange(uint8_t ch, uint8_t cc, uint8_t value) {
-  Serial1.write(st(0xB0, ch));
-  Serial1.write(clamp7(cc));
-  Serial1.write(clamp7(value));
-}
+// No on-chip reverb/chorus yet -- accepted, ignored.
+void setReverbSend(uint8_t ch, uint8_t v){ (void)ch; (void)v; }
+void setChorusSend(uint8_t ch, uint8_t v){ (void)ch; (void)v; }
+void setReverbType(uint8_t ch, uint8_t t){ (void)ch; (void)t; }
+void setChorusType(uint8_t ch, uint8_t t){ (void)ch; (void)t; }
 
-void programChange(uint8_t ch, uint8_t program) {
-  Serial1.write(st(0xC0, ch));
-  Serial1.write(clamp7(program));
-}
+// Transport / real-time bytes were for an external module; nothing to send now.
+void clockTick(){}
+void start()    {}
+void stop()     {}
+void cont()     {}
 
-void pitchBend(uint8_t ch, int16_t bend14) {
-  int v = bend14 + 8192;                 // 0..16383, centre 8192
-  if (v < 0) v = 0; if (v > 16383) v = 16383;
-  Serial1.write(st(0xE0, ch));
-  Serial1.write((uint8_t)(v & 0x7F));    // LSB
-  Serial1.write((uint8_t)((v >> 7) & 0x7F)); // MSB
-}
+void allNotesOff(uint8_t ch){ Synth::allNotesOff(ch); }
+void allSoundOff(uint8_t ch){ Synth::allSoundOff(ch); }
+void panic()                { Synth::panic(); }
 
-void bankSelect(uint8_t ch, uint8_t bankMSB) { controlChange(ch, 0,  bankMSB); }
-void setVolume   (uint8_t ch, uint8_t v)     { controlChange(ch, 7,  v); }
-void setPan      (uint8_t ch, uint8_t v)     { controlChange(ch, 10, v); }
-void setExpression(uint8_t ch, uint8_t v)    { controlChange(ch, 11, v); }
-void setModulation(uint8_t ch, uint8_t v)    { controlChange(ch, 1,  v); }
-void setReverbSend(uint8_t ch, uint8_t v)    { controlChange(ch, 91, v); }   // CC0x5B
-void setChorusSend(uint8_t ch, uint8_t v)    { controlChange(ch, 93, v); }   // CC0x5D
-void setReverbType(uint8_t ch, uint8_t t)    { controlChange(ch, 80, t & 7); } // CC0x50
-void setChorusType(uint8_t ch, uint8_t t)    { controlChange(ch, 81, t & 7); } // CC0x51
-
-void clockTick() { Serial1.write((uint8_t)0xF8); }
-void start()     { Serial1.write((uint8_t)0xFA); }
-void stop()      { Serial1.write((uint8_t)0xFC); }
-void cont()      { Serial1.write((uint8_t)0xFB); }
-
-void allNotesOff(uint8_t ch) { controlChange(ch, 123, 0); }
-void allSoundOff(uint8_t ch) { controlChange(ch, 120, 0); }
-
-void panic() {
-  for (uint8_t ch = 1; ch <= 16; ch++) { allSoundOff(ch); allNotesOff(ch); }
-}
-
-void gmReset() {
-  static const uint8_t sx[] = { 0xF0, 0x7E, 0x7F, 0x09, 0x01, 0xF7 };
-  Serial1.write(sx, sizeof(sx));
-}
-
-void masterVolume(uint8_t v) {
-  v = clamp7(v);
-  uint8_t sx[] = { 0xF0, 0x7F, 0x7F, 0x04, 0x01, 0x00, v, 0xF7 };
-  Serial1.write(sx, sizeof(sx));
-}
+void gmReset()               { Synth::reset(); }
+void masterVolume(uint8_t v) { Synth::masterVolume(v); }
 
 } // namespace GMSynth
