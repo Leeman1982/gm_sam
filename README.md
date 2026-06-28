@@ -118,13 +118,22 @@ resolution than I2S, but needs no extra chip.
 
 ## SoundFonts
 
-Pick the active font in `Config.h` (exactly one of the `FONT_*` defines):
+Enable **any subset** of fonts in `Config.h` — every enabled one stays resident
+in flash and you switch between them **live** on the SONG page (the *Font* row,
+SHIFT+rotate). The first enabled font is active at boot. Switching cuts sounding
+voices for an instant, then the next note uses the new font; each channel keeps
+its program number, so e.g. program 0 plays the new font's program 0.
 
 | Define              | Font              | Size  | How it's stored        | Board   |
 |---------------------|-------------------|-------|------------------------|---------|
 | `FONT_SYNTHGMS`     | SYNTHGMS (GM)     | 1 MB  | baked C array          | 4/16 MB |
 | `FONT_VINTAGEDREAMS`| Vintage Dreams    | 0.3 MB| baked C array          | 4/16 MB |
 | `FONT_POWERGM`      | Power GM 1.5 (GM) | 8 MB  | flash partition        | 16 MB   |
+
+The defaults enable all three (a 16 MB board fits SYNTHGMS + Vintage Dreams baked
+in the low ~1.3 MB, Power GM at the 2 MB flash offset, and the song FS above it).
+`FONT_POWERGM` is skipped automatically until you actually write the font to
+flash, so it simply won't appear in the selector before then.
 
 Use **16-bit PCM** SoundFonts (the reader streams `int16` straight from flash).
 Compressed SF2/SF3 (Ogg-Vorbis samples) are **not** supported.
@@ -137,8 +146,10 @@ Compressed SF2/SF3 (Ogg-Vorbis samples) are **not** supported.
 python3 tools/sf2_to_cpp.py soundfonts/YourFont.sf2 --name YourFont --out .
 ```
 
-That writes `Soundfont_YourFont.cpp/.h`. Add a `FONT_YOURFONT` define and an
-`#elif` branch in `Synth.cpp` (mirroring the existing ones) to select it.
+That writes `Soundfont_YourFont.cpp/.h` (the array is auto-guarded behind a
+`FONT_YOURFONT` define). To make it selectable, add `#define FONT_YOURFONT 1` in
+`Config.h`, then in `Synth.cpp` include its header and add one registry line in
+`begin()` (mirror the existing `fonts_[fontCount_++] = { ... }` entries).
 
 ### Loading a large font: Power GM 1.5 (8 MB, 16 MB board only)
 
@@ -198,8 +209,9 @@ The status bar shows page, track, MIDI channel, mute/solo flag, transport
 - **FX** — global Reverb type (0–7), Chorus type (0–7), Master Volume.
   *(Reverb/chorus type reserved as above; Master Volume scales the synth output.)*
 - **SONG** — BPM (20–300), Swing (0–75%), Resolution (steps/beat: 1,2,3,4,6,8),
-  Clock source (INT / EXT-reserved), Slot (1–8, `*` = used), then the action
-  rows **Save**, **Load**, **GM Reset** (navigate to one and click).
+  Clock source (INT / EXT-reserved), Slot (1–8, `*` = used), **Font** (SHIFT+
+  rotate to switch the active SoundFont live — see below), then the action rows
+  **Save**, **Load**, **GM Reset** (navigate to one and click).
 
 ---
 

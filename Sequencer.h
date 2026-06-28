@@ -67,6 +67,7 @@ public:
   volatile uint8_t reqPanic     = 0;
   volatile uint8_t reqGmReset   = 0;   // re-send GM reset + all settings
   volatile uint8_t reqResendAll = 0;   // force full reconcile (after load)
+  volatile uint8_t reqFont      = 0;   // 0 = none, else (font index + 1)
   volatile uint8_t isRunning    = 0;   // engine -> UI transport state
 
   // audition (preview a note from the UI)
@@ -98,6 +99,7 @@ public:
   void panic()    { reqPanic = 1; }
   void resendAll(){ reqResendAll = 1; }
   void gmReset()  { reqGmReset = 1; }
+  void setFont(int idx) { reqFont = (uint8_t)(idx + 1); }   // applied on core1
   void audition(uint8_t t, uint8_t note);
 
   // step edits

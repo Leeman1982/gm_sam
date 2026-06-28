@@ -38,6 +38,16 @@ namespace Synth {
   // Look up the real SoundFont patch name for the UI (or nullptr).
   const char* patchName(uint8_t ch, uint8_t program);
 
+  // ---- runtime font selection ----------------------------------------------
+  // Several fonts can be resident at once; switch the active one live.
+  // setFont() must run on core1 (it reloads the shared reader + kills voices);
+  // route UI requests through the engine.  The query helpers are read-only and
+  // safe to call from core0.
+  uint8_t     fontCount();
+  uint8_t     currentFont();
+  const char* fontName(uint8_t index);
+  bool        setFont(uint8_t index);
+
   // ---- audio rendering (called from the audio pump on core1) ---------------
   // Fills `frames` interleaved L,R int16 samples at AUDIO_RATE.
   void render(int16_t* out, uint32_t frames);

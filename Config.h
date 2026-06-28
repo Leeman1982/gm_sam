@@ -63,17 +63,31 @@
                                  // raise to 1 if dense chords clip on your font)
 
 // ---------------------------------------------------------------------------
-//  SOUNDFONT SELECTION  (pick exactly ONE)
+//  SOUNDFONTS  (enable any subset; switch live from the SONG page "Font" row)
 // ---------------------------------------------------------------------------
+//  Every enabled font is resident at once and selectable at runtime.  The
+//  first enabled one is active at boot.
+//
 //  FONT_SYNTHGMS     1.0 MB full General-MIDI set.  Baked into the sketch.
-//                    Fits the 4 MB and 16 MB boards.  Default.
 //  FONT_VINTAGEDREAMS 0.3 MB synth/vintage character set (banks 0 + 128).
 //  FONT_POWERGM      8.0 MB high-quality GM set.  TOO big to bake as a C array,
 //                    so it is read from a fixed flash region you write once with
 //                    picotool (needs a 16 MB board).  See README -> SoundFonts.
+//                    If the region is empty it is silently skipped, so it only
+//                    appears in the selector once you have flashed it.
+//
+//  Defaults target a 16 MB board (all three).  On a 4 MB board keep the two
+//  baked fonts; on a 2 MB board enable just one.  (Overridable via -D for
+//  host-side tests.)
+#ifndef FONT_SYNTHGMS
 #define FONT_SYNTHGMS      1
-#define FONT_VINTAGEDREAMS 0
-#define FONT_POWERGM       0
+#endif
+#ifndef FONT_VINTAGEDREAMS
+#define FONT_VINTAGEDREAMS 1
+#endif
+#ifndef FONT_POWERGM
+#define FONT_POWERGM       1
+#endif
 
 // Flash-partition layout for FONT_POWERGM (XIP base is 0x10000000).  The font
 // is written at this byte offset with:  picotool load PowerGM_1.5.sf2 -o ADDR

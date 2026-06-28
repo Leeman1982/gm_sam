@@ -47,4 +47,6 @@ namespace GMSynth {
   void gmReset();                          // GM-On SysEx (F0 7E 7F 09 01 F7)
   void masterVolume(uint8_t v);            // GM master volume SysEx (0..127)
 
+  void setFont(uint8_t index);             // switch the active on-chip SoundFont
+
 } // namespace GMSynth

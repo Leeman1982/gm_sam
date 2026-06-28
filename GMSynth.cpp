@@ -59,5 +59,6 @@ void panic()                { Synth::panic(); }
 
 void gmReset()               { Synth::reset(); }
 void masterVolume(uint8_t v) { Synth::masterVolume(v); }
+void setFont(uint8_t index)  { Synth::setFont(index); }
 
 } // namespace GMSynth

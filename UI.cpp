@@ -28,8 +28,9 @@ static uint8_t seqCursor    = 0;          // step cursor on the SEQ page
 static uint8_t instCursor = 0;            // 0..4
 static uint8_t mixCursor  = 0;            // 0..3
 static uint8_t fxCursor   = 0;            // 0..2
-static uint8_t songCursor = 0;            // 0..7
+static uint8_t songCursor = 0;            // 0..8
 static uint8_t slotSel    = 0;            // 0..NUM_SONG_SLOTS-1
+static uint8_t fontSel    = 0;            // selected SoundFont index (SONG page)
 
 // Toast overlay.
 static char     toastMsg[22] = {0};
@@ -155,7 +156,7 @@ static void handleRotate(int d, bool shift) {
       break;
 
     case PAGE_SONG:
-      if (!shift) { songCursor = (uint8_t)clampi(songCursor + d, 0, 7); break; }
+      if (!shift) { songCursor = (uint8_t)clampi(songCursor + d, 0, 8); break; }
       switch (songCursor) {
         case 0: seq.setBpm(d);   break;
         case 1: seq.setSwing(d); break;
@@ -163,6 +164,11 @@ static void handleRotate(int d, bool shift) {
         case 3: seq.data.clockSrc = (seq.data.clockSrc == CLK_INTERNAL)
                                     ? CLK_EXTERNAL : CLK_INTERNAL; break;
         case 4: slotSel = (uint8_t)clampi(slotSel + d, 0, NUM_SONG_SLOTS - 1); break;
+        case 5: {                                       // Font selector
+          uint8_t n = Synth::fontCount();
+          if (n) { fontSel = (uint8_t)(((int)fontSel + d % n + n) % n);
+                   seq.setFont(fontSel); toast(Synth::fontName(fontSel)); }
+        } break;
         default: break;   // action rows ignore value edits
       }
       break;
@@ -187,15 +193,15 @@ static void handleClick(bool shift) {
 
     case PAGE_SONG:
       switch (songCursor) {
-        case 5: {                                       // Save
+        case 6: {                                       // Save
           char m[22];
           if (Storage::save(slotSel, seq.data))
                snprintf(m, sizeof(m), "SAVED slot %d", slotSel + 1);
           else snprintf(m, sizeof(m), "SAVE FAILED");
           toast(m);
         } break;
-        case 6: doLoad(); break;                        // Load
-        case 7: seq.gmReset(); toast("GM RESET SENT"); break;
+        case 7: doLoad(); break;                        // Load
+        case 8: seq.gmReset(); toast("GM RESET SENT"); break;
         default: break;
       }
       break;
@@ -404,7 +410,7 @@ static void renderFx() {
 }
 
 static void renderSong() {
-  Row r[8];
+  Row r[9];
   strcpy(r[0].label, "BPM");
   snprintf(r[0].value, sizeof(r[0].value), "%d", seq.data.bpm);
 
@@ -421,11 +427,14 @@ static void renderSong() {
   snprintf(r[4].value, sizeof(r[4].value), "%d%s", slotSel + 1,
            Storage::exists(slotSel) ? " *" : "");
 
-  strcpy(r[5].label, "> Save");      r[5].value[0] = '\0';
-  strcpy(r[6].label, "> Load");      r[6].value[0] = '\0';
-  strcpy(r[7].label, "> GM Reset");  r[7].value[0] = '\0';
+  strcpy(r[5].label, "Font");
+  snprintf(r[5].value, sizeof(r[5].value), "%s", Synth::fontName(Synth::currentFont()));
 
-  drawRows(r, 8, songCursor);
+  strcpy(r[6].label, "> Save");      r[6].value[0] = '\0';
+  strcpy(r[7].label, "> Load");      r[7].value[0] = '\0';
+  strcpy(r[8].label, "> GM Reset");  r[8].value[0] = '\0';
+
+  drawRows(r, 9, songCursor);
 }
 
 static void drawToast() {

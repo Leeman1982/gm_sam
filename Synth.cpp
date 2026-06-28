@@ -6,19 +6,15 @@
 #include <math.h>
 #include <string.h>
 
-// ---- choose the baked / flashed SoundFont (see Config.h) -------------------
+// ---- baked SoundFont headers (each guarded by its own FONT_* define) -------
 #if FONT_SYNTHGMS
   #include "Soundfont_SYNTHGMS.h"
-  #define FONT_PTR  g_sf2_SYNTHGMS
-  #define FONT_LEN  g_sf2_SYNTHGMS_len
-#elif FONT_VINTAGEDREAMS
+#endif
+#if FONT_VINTAGEDREAMS
   #include "Soundfont_VintageDreams.h"
-  #define FONT_PTR  g_sf2_VintageDreams
-  #define FONT_LEN  g_sf2_VintageDreams_len
-#elif FONT_POWERGM
-  // Read straight from the flash region written by picotool (no C array).
-#else
-  #error "Select a SoundFont in Config.h (FONT_SYNTHGMS / _VINTAGEDREAMS / _POWERGM)"
+#endif
+#if !FONT_SYNTHGMS && !FONT_VINTAGEDREAMS && !FONT_POWERGM
+  #error "Enable at least one SoundFont in Config.h (FONT_SYNTHGMS / _VINTAGEDREAMS / _POWERGM)"
 #endif
 
 namespace {
@@ -64,6 +60,12 @@ struct Voice {
 Voice    voices_[SYNTH_MAX_VOICES];
 uint32_t ageCounter_ = 1;
 bool     ready_ = false;
+
+// ---- resident font registry (built once in begin) --------------------------
+struct FontEntry { const char* name; const uint8_t* ptr; uint32_t len; };
+FontEntry fonts_[4];
+uint8_t   fontCount_  = 0;
+uint8_t   activeFont_ = 0;
 
 inline int16_t clip16(int32_t v){ return v > 32767 ? 32767 : (v < -32768 ? -32768 : (int16_t)v); }
 
@@ -167,17 +169,42 @@ bool begin(){
   for (int i = 0; i < 16; i++) ch_[i] = Channel();
   ch_[DRUM_CHANNEL - 1].bankMSB = 128;          // GM percussion bank
 
-#if FONT_POWERGM
-  // The font sits at a fixed XIP flash address; its length is the RIFF chunk
-  // size (bytes 4..7) + 8.  Validate the header before trusting it.
-  const uint8_t* base = (const uint8_t*)(0x10000000UL + FONT_FLASH_OFFSET);
-  uint32_t len = 0;
-  if (base[0]=='R'&&base[1]=='I'&&base[2]=='F'&&base[3]=='F')
-    len = ((uint32_t)base[4] | (base[5]<<8) | (base[6]<<16) | ((uint32_t)base[7]<<24)) + 8;
-  ready_ = SF2::begin(base, len);
-#else
-  ready_ = SF2::begin(FONT_PTR, (uint32_t)FONT_LEN);
+  // ---- build the resident font registry -----------------------------------
+  fontCount_ = 0; activeFont_ = 0;
+#if FONT_SYNTHGMS
+  fonts_[fontCount_++] = { "SYNTHGMS", g_sf2_SYNTHGMS, (uint32_t)g_sf2_SYNTHGMS_len };
 #endif
+#if FONT_VINTAGEDREAMS
+  fonts_[fontCount_++] = { "Vintage Drm", g_sf2_VintageDreams, (uint32_t)g_sf2_VintageDreams_len };
+#endif
+#if FONT_POWERGM
+  {
+    // Power GM lives at a fixed XIP flash address (written once with picotool);
+    // its length is the RIFF chunk size (bytes 4..7) + 8.  Skip it if the
+    // region has not been flashed yet (erased flash is not a valid header).
+    const uint8_t* base = (const uint8_t*)(0x10000000UL + FONT_FLASH_OFFSET);
+    if (base[0]=='R'&&base[1]=='I'&&base[2]=='F'&&base[3]=='F') {
+      uint32_t len = ((uint32_t)base[4] | (base[5]<<8) | (base[6]<<16) |
+                      ((uint32_t)base[7]<<24)) + 8;
+      fonts_[fontCount_++] = { "Power GM", base, len };
+    }
+  }
+#endif
+
+  ready_ = (fontCount_ > 0) &&
+           SF2::begin(fonts_[activeFont_].ptr, fonts_[activeFont_].len);
+  return ready_;
+}
+
+uint8_t     fontCount()   { return fontCount_; }
+uint8_t     currentFont() { return activeFont_; }
+const char* fontName(uint8_t i){ return (i < fontCount_) ? fonts_[i].name : ""; }
+
+bool setFont(uint8_t i){
+  if (i >= fontCount_) return false;
+  panic();                              // voices index into the old sample pool
+  activeFont_ = i;
+  ready_ = SF2::begin(fonts_[i].ptr, fonts_[i].len);
   return ready_;
 }
 
