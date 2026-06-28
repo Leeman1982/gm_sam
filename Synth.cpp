@@ -62,10 +62,14 @@ uint32_t ageCounter_ = 1;
 bool     ready_ = false;
 
 // ---- resident font registry (built once in begin) --------------------------
-struct FontEntry { const char* name; const uint8_t* ptr; uint32_t len; };
+// gainQ12 is per-font makeup gain (4096 = unity) so loudness matches across
+// fonts when you switch live.  Values came from measuring a representative GM
+// phrase per font (see tools/measure); tune to taste.
+struct FontEntry { const char* name; const uint8_t* ptr; uint32_t len; uint16_t gainQ12; };
 FontEntry fonts_[4];
 uint8_t   fontCount_  = 0;
 uint8_t   activeFont_ = 0;
+uint16_t  fontGain_   = 4096;   // makeup gain of the active font (Q12)
 
 inline int16_t clip16(int32_t v){ return v > 32767 ? 32767 : (v < -32768 ? -32768 : (int16_t)v); }
 
@@ -172,10 +176,10 @@ bool begin(){
   // ---- build the resident font registry -----------------------------------
   fontCount_ = 0; activeFont_ = 0;
 #if FONT_SYNTHGMS
-  fonts_[fontCount_++] = { "SYNTHGMS", g_sf2_SYNTHGMS, (uint32_t)g_sf2_SYNTHGMS_len };
+  fonts_[fontCount_++] = { "SYNTHGMS", g_sf2_SYNTHGMS, (uint32_t)g_sf2_SYNTHGMS_len, 5591 };
 #endif
 #if FONT_VINTAGEDREAMS
-  fonts_[fontCount_++] = { "Vintage Drm", g_sf2_VintageDreams, (uint32_t)g_sf2_VintageDreams_len };
+  fonts_[fontCount_++] = { "Vintage Drm", g_sf2_VintageDreams, (uint32_t)g_sf2_VintageDreams_len, 1122 };
 #endif
 #if FONT_POWERGM
   {
@@ -186,11 +190,12 @@ bool begin(){
     if (base[0]=='R'&&base[1]=='I'&&base[2]=='F'&&base[3]=='F') {
       uint32_t len = ((uint32_t)base[4] | (base[5]<<8) | (base[6]<<16) |
                       ((uint32_t)base[7]<<24)) + 8;
-      fonts_[fontCount_++] = { "Power GM", base, len };
+      fonts_[fontCount_++] = { "Power GM", base, len, 4096 };
     }
   }
 #endif
 
+  if (fontCount_) fontGain_ = fonts_[activeFont_].gainQ12;
   ready_ = (fontCount_ > 0) &&
            SF2::begin(fonts_[activeFont_].ptr, fonts_[activeFont_].len);
   return ready_;
@@ -204,6 +209,7 @@ bool setFont(uint8_t i){
   if (i >= fontCount_) return false;
   panic();                              // voices index into the old sample pool
   activeFont_ = i;
+  fontGain_ = fonts_[i].gainQ12;        // match loudness across fonts
   ready_ = SF2::begin(fonts_[i].ptr, fonts_[i].len);
   return ready_;
 }
@@ -364,8 +370,10 @@ void render(int16_t* out, uint32_t frames){
     }
   }
 
-  for (uint32_t i = 0; i < frames * 2; i++)
-    out[i] = clip16(acc[i] >> SYNTH_HEADROOM);
+  for (uint32_t i = 0; i < frames * 2; i++) {
+    int32_t s = (int32_t)(((int64_t)acc[i] * fontGain_) >> 12);  // per-font makeup
+    out[i] = clip16(s >> SYNTH_HEADROOM);
+  }
 }
 
 } // namespace Synth

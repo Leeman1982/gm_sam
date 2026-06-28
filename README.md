@@ -135,6 +135,11 @@ in the low ~1.3 MB, Power GM at the 2 MB flash offset, and the song FS above it)
 `FONT_POWERGM` is skipped automatically until you actually write the font to
 flash, so it simply won't appear in the selector before then.
 
+Each font has a **makeup gain** (`gainQ12` in the `Synth.cpp` registry, 4096 =
+unity) so loudness stays consistent when you switch — fonts are mastered at very
+different levels. The shipped values were measured from a representative GM
+phrase; adjust them to taste if a font sounds hot or quiet.
+
 Use **16-bit PCM** SoundFonts (the reader streams `int16` straight from flash).
 Compressed SF2/SF3 (Ogg-Vorbis samples) are **not** supported.
 
