@@ -1,9 +1,12 @@
 // ============================================================================
-//  GMSynth.h  -  Dream SAM2695 serial-MIDI driver
+//  GMSynth.h  -  VS1053B GM-synth driver (SPI / real-time MIDI)
 //
-//  Thin, allocation-free wrapper over Serial1 (UART0 @ 31250 baud).
+//  Thin, allocation-free wrapper that brings the VS1053B up in real-time MIDI
+//  mode (software start patch) and streams 0x00-padded MIDI bytes over the SDI
+//  (XDCS) data bus. The public API below is identical to the previous SAM2695
+//  UART driver, so the sequencer/UI are unchanged.
 //  IMPORTANT: only ONE core may call these functions. In this project that is
-//  core1 (the sequencer engine). core0 never touches the UART.
+//  core1 (the sequencer engine). core0 never touches the SPI bus.
 // ============================================================================
 #pragma once
 #include <Arduino.h>
@@ -11,7 +14,8 @@
 
 namespace GMSynth {
 
-  // Bring up Serial1 on the configured pins and reset the SAM2695 to GM mode.
+  // Bring up SPI, reset the VS1053B, set the clock, and load the real-time MIDI
+  // start patch so the chip is ready to receive MIDI on the SDI bus.
   void begin();
 
   // ---- Channel voice messages (channel is 1-based, 1..16) ----
@@ -42,7 +46,24 @@ namespace GMSynth {
   void allSoundOff(uint8_t ch);   // CC120
   void panic();                   // notes+sound off on all 16 channels
 
-  void gmReset();                          // GM-On SysEx (F0 7E 7F 09 01 F7)
-  void masterVolume(uint8_t v);            // GM master volume SysEx (0..127)
+  void gmReset();                          // emulated GM reset (silence + CC121)
+  void masterVolume(uint8_t v);            // native VS1053 SCI_VOL (0..127)
+
+  // Diagnostic counter: total Note-On messages sent, for an on-screen MIDI-
+  // activity indicator. Written by core1, read-only from core0.
+  extern volatile uint32_t notesSent;
+
+  // Boot read-back (refreshed by begin()/serviceHealth()): VS1053 chip version
+  // (4 = VS1053, 3 = VS1003, 0/15 = no SPI reply) and SCI_AUDATA (0xAC45 once
+  // RT-MIDI is live). vsAlive is true once the chip is confirmed in RT-MIDI mode;
+  // vsJustCameAlive pulses on the dead->alive edge so the engine can resend.
+  extern volatile uint16_t vsVersion;
+  extern volatile uint16_t vsAudata;
+  extern volatile bool     vsAlive;
+  extern volatile bool     vsJustCameAlive;
+
+  // Call from core1's loop: while the chip isn't alive, periodically re-attempt
+  // the bring-up (drives the live OLED diagnostic + auto-recovery). No-op once up.
+  void serviceHealth();
 
 } // namespace GMSynth

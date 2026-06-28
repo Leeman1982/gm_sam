@@ -1,5 +1,5 @@
 // ============================================================================
-//  UI.cpp  -  SH1106 OLED rendering + input handling (core0)
+//  UI.cpp  -  SSD1309 OLED rendering + input handling (core0)
 // ============================================================================
 #include "UI.h"
 #include <Wire.h>
@@ -9,10 +9,14 @@
 #include "Controls.h"
 #include "Storage.h"
 #include "GMNames.h"
+#include "GMSynth.h"
 
-// ---- Display object (SH1106, hardware I2C, full frame buffer) --------------
-// Matches the tested setup: SH1106 128x64, U8g2, HW I2C on Wire (I2C0).
-static U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
+// ---- Display object (SSD1309 2.42" 128x64, hardware I2C, full frame buffer) -
+// Panel: 2.42" 128x64 OLED, SSD1309 controller, I2C @ 0x3C (U8g2, HW I2C / I2C0).
+// If the image is shifted or garbled, try the NONAME2 init, or the SSD1306
+// constructor (SSD1309 is largely register-compatible with SSD1306):
+//   U8G2_SSD1309_128X64_NONAME2_F_HW_I2C  /  U8G2_SSD1306_128X64_NONAME_F_HW_I2C
+static U8G2_SSD1309_128X64_NONAME0_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
 
 namespace UI {
 
@@ -29,6 +33,7 @@ static uint8_t mixCursor  = 0;            // 0..3
 static uint8_t fxCursor   = 0;            // 0..2
 static uint8_t songCursor = 0;            // 0..7
 static uint8_t slotSel    = 0;            // 0..NUM_SONG_SLOTS-1
+static bool    editing    = false;        // list pages: click toggles edit-mode on the selected row
 
 // Toast overlay.
 static char     toastMsg[22] = {0};
@@ -83,10 +88,10 @@ static void clampCursors() {
   if (seqCursor >= len) seqCursor = len ? len - 1 : 0;
 }
 
-static void nextPage() { currentPage = (currentPage + 1) % PAGE_COUNT; }
-static void prevPage() { currentPage = (currentPage + PAGE_COUNT - 1) % PAGE_COUNT; }
-static void nextTrack(){ currentTrack = (currentTrack + 1) % MAX_TRACKS; clampCursors(); }
-static void prevTrack(){ currentTrack = (currentTrack + MAX_TRACKS - 1) % MAX_TRACKS; clampCursors(); }
+static void nextPage() { currentPage = (currentPage + 1) % PAGE_COUNT; editing = false; }
+static void prevPage() { currentPage = (currentPage + PAGE_COUNT - 1) % PAGE_COUNT; editing = false; }
+static void nextTrack(){ currentTrack = (currentTrack + 1) % MAX_TRACKS; clampCursors(); editing = false; }
+static void prevTrack(){ currentTrack = (currentTrack + MAX_TRACKS - 1) % MAX_TRACKS; clampCursors(); editing = false; }
 
 // Audition the relevant note for the current context.
 static void auditionCurrent() {
@@ -101,30 +106,31 @@ static void auditionCurrent() {
 //  INPUT  (called every core0 loop)
 // ---------------------------------------------------------------------------
 static void doLoad() {
-  seq.stop();
-  uint32_t t0 = millis();
-  while (seq.running() && (millis() - t0) < 80) delay(2);
+  // Read the file into a local copy first; touch no shared state unless it succeeds.
   Song tmp;
-  if (Storage::load(slotSel, tmp)) {
-    seq.data = tmp;            // single memcpy; engine is stopped
-    seq.resendAll();
-    clampCursors();
-    char m[22]; snprintf(m, sizeof(m), "LOADED slot %d", slotSel + 1); toast(m);
-  } else {
+  if (!Storage::load(slotSel, tmp)) {
     char m[22]; snprintf(m, sizeof(m), "EMPTY slot %d", slotSel + 1); toast(m);
+    return;
   }
+  seq.loadSong(tmp);         // stops transport, parks core1, then swaps the Song race-free
+  clampCursors();
+  char m[22]; snprintf(m, sizeof(m), "LOADED slot %d", slotSel + 1); toast(m);
 }
 
 static void handleRotate(int d, bool shift) {
-  Track& tr = seq.data.tracks[currentTrack];
-  switch (currentPage) {
-    case PAGE_SEQ:
-      if (shift) seq.editStepField(currentTrack, seqCursor, tr.stepField, d);
-      else       seqCursor = (uint8_t)clampi(seqCursor + d, 0, tr.length - 1);
-      break;
+  if (currentPage == PAGE_SEQ) {
+    Track& tr = seq.data.tracks[currentTrack];
+    if (shift) seq.editStepField(currentTrack, seqCursor, tr.stepField, d);
+    else       seqCursor = (uint8_t)clampi(seqCursor + d, 0, tr.length - 1);
+    return;
+  }
 
+  // List pages: rotate moves the cursor, unless we are editing the selected row
+  // (entered via click) or SHIFT is held -- then rotate changes the value.
+  const bool edit = editing || shift;
+  switch (currentPage) {
     case PAGE_INST:
-      if (!shift) { instCursor = (uint8_t)clampi(instCursor + d, 0, 4); break; }
+      if (!edit) { instCursor = (uint8_t)clampi(instCursor + d, 0, 4); break; }
       switch (instCursor) {
         case 0: seq.setChannel(currentTrack, d); clampCursors(); break;
         case 1: seq.setProgram(currentTrack, d); break;
@@ -135,7 +141,7 @@ static void handleRotate(int d, bool shift) {
       break;
 
     case PAGE_MIX:
-      if (!shift) { mixCursor = (uint8_t)clampi(mixCursor + d, 0, 3); break; }
+      if (!edit) { mixCursor = (uint8_t)clampi(mixCursor + d, 0, 3); break; }
       switch (mixCursor) {
         case 0: seq.setVol(currentTrack, d);     break;
         case 1: seq.setPan(currentTrack, d);     break;
@@ -145,7 +151,7 @@ static void handleRotate(int d, bool shift) {
       break;
 
     case PAGE_FX:
-      if (!shift) { fxCursor = (uint8_t)clampi(fxCursor + d, 0, 2); break; }
+      if (!edit) { fxCursor = (uint8_t)clampi(fxCursor + d, 0, 2); break; }
       switch (fxCursor) {
         case 0: seq.setRevType(d);   break;
         case 1: seq.setChoType(d);   break;
@@ -154,7 +160,7 @@ static void handleRotate(int d, bool shift) {
       break;
 
     case PAGE_SONG:
-      if (!shift) { songCursor = (uint8_t)clampi(songCursor + d, 0, 7); break; }
+      if (!edit) { songCursor = (uint8_t)clampi(songCursor + d, 0, 7); break; }
       switch (songCursor) {
         case 0: seq.setBpm(d);   break;
         case 1: seq.setSwing(d); break;
@@ -162,45 +168,44 @@ static void handleRotate(int d, bool shift) {
         case 3: seq.data.clockSrc = (seq.data.clockSrc == CLK_INTERNAL)
                                     ? CLK_EXTERNAL : CLK_INTERNAL; break;
         case 4: slotSel = (uint8_t)clampi(slotSel + d, 0, NUM_SONG_SLOTS - 1); break;
-        default: break;   // action rows ignore value edits
+        default: break;   // action rows have no value
       }
       break;
   }
 }
 
-static void handleClick(bool shift) {
-  Track& tr = seq.data.tracks[currentTrack];
-  switch (currentPage) {
-    case PAGE_SEQ:
-      if (shift) {                              // cycle the per-step field
-        tr.stepField = (tr.stepField + 1) % SF_COUNT;
-        toast(kFieldName[tr.stepField]);
-      } else {
-        seq.toggleStep(currentTrack, seqCursor);
-      }
-      break;
-
-    case PAGE_INST:
-      if (instCursor == 2) seq.setBank(currentTrack);   // click also toggles bank
-      break;
-
-    case PAGE_SONG:
-      switch (songCursor) {
-        case 5: {                                       // Save
-          char m[22];
-          if (Storage::save(slotSel, seq.data))
-               snprintf(m, sizeof(m), "SAVED slot %d", slotSel + 1);
-          else snprintf(m, sizeof(m), "SAVE FAILED");
-          toast(m);
-        } break;
-        case 6: doLoad(); break;                        // Load
-        case 7: seq.gmReset(); toast("GM RESET SENT"); break;
-        default: break;
-      }
-      break;
-
+// Run a SONG-page action row (Save / Load / GM Reset).
+static void runSongAction() {
+  switch (songCursor) {
+    case 5: {                                         // Save
+      char m[22];
+      if (Storage::save(slotSel, seq.data))
+           snprintf(m, sizeof(m), "SAVED slot %d", slotSel + 1);
+      else snprintf(m, sizeof(m), "SAVE FAILED");
+      toast(m);
+    } break;
+    case 6: doLoad(); break;                          // Load
+    case 7: seq.gmReset(); toast("GM RESET SENT"); break;
     default: break;
   }
+}
+
+static void handleClick(bool shift) {
+  if (currentPage == PAGE_SEQ) {
+    Track& tr = seq.data.tracks[currentTrack];
+    if (shift) {                              // cycle the per-step field
+      tr.stepField = (tr.stepField + 1) % SF_COUNT;
+      toast(kFieldName[tr.stepField]);
+    } else {
+      seq.toggleStep(currentTrack, seqCursor);
+    }
+    return;
+  }
+
+  // List pages: SONG action rows fire immediately; every value row toggles
+  // edit-mode so a following rotate changes the value (no SHIFT needed).
+  if (currentPage == PAGE_SONG && songCursor >= 5) { editing = false; runSongAction(); return; }
+  editing = !editing;
 }
 
 void handleInput() {
@@ -262,13 +267,21 @@ static void drawStatusBar() {
   snprintf(buf, sizeof(buf), "%3d", seq.data.bpm);
   u8g2.drawStr(108, 7, buf);
 
+  // MIDI TX activity: this dot pulses each time a Note-On is sent to the synth.
+  // If it blinks while you play but you hear nothing, MIDI is leaving the Pico
+  // correctly -- the fault is then the S wire / level or the audio out, not code.
+  static uint32_t seenNotes = 0, pulseUntil = 0;
+  uint32_t ns = GMSynth::notesSent;
+  if (ns != seenNotes) { seenNotes = ns; pulseUntil = millis() + 150; }
+  if (millis() < pulseUntil) u8g2.drawDisc(99, 4, 2);
+
   u8g2.drawHLine(0, 9, 128);
 }
 
 // Generic list-page row.
 struct Row { char label[12]; char value[16]; };
 
-static void drawRows(Row* rows, int n, int cursor) {
+static void drawRows(Row* rows, int n, int cursor, bool editSel) {
   const int listTop = 12, rowH = 10, visible = 5;
   int first = 0;
   if (n > visible) {
@@ -282,8 +295,14 @@ static void drawRows(Row* rows, int n, int cursor) {
     bool sel = (i == cursor);
     if (sel) { u8g2.drawBox(0, top, 128, rowH); u8g2.setDrawColor(0); }
     u8g2.drawStr(2, top + 8, rows[i].label);
-    int vw = (int)strlen(rows[i].value) * 6;
-    u8g2.drawStr(126 - vw, top + 8, rows[i].value);
+    // The selected row shows [value] while it is being edited, so it is obvious
+    // that rotating now changes the value instead of moving the cursor.
+    char out[20];
+    if (sel && editSel && rows[i].value[0])
+         snprintf(out, sizeof(out), "[%s]", rows[i].value);
+    else snprintf(out, sizeof(out), "%s", rows[i].value);
+    int vw = (int)strlen(out) * 6;
+    u8g2.drawStr(126 - vw, top + 8, out);
     if (sel) u8g2.setDrawColor(1);
   }
 }
@@ -358,7 +377,7 @@ static void renderInst() {
   strcpy(r[4].label, "Length");
   snprintf(r[4].value, sizeof(r[4].value), "%d", tr.length);
 
-  drawRows(r, 5, instCursor);
+  drawRows(r, 5, instCursor, editing);
 }
 
 static void renderMix() {
@@ -379,7 +398,7 @@ static void renderMix() {
   strcpy(r[3].label, "Chorus Snd");
   snprintf(r[3].value, sizeof(r[3].value), "%d", tr.choSend);
 
-  drawRows(r, 4, mixCursor);
+  drawRows(r, 4, mixCursor, editing);
 }
 
 static void renderFx() {
@@ -392,7 +411,7 @@ static void renderFx() {
            kChoName[seq.data.choType & 7]);
   strcpy(r[2].label, "Master Vol");
   snprintf(r[2].value, sizeof(r[2].value), "%d", seq.data.masterVol);
-  drawRows(r, 3, fxCursor);
+  drawRows(r, 3, fxCursor, editing);
 }
 
 static void renderSong() {
@@ -417,7 +436,7 @@ static void renderSong() {
   strcpy(r[6].label, "> Load");      r[6].value[0] = '\0';
   strcpy(r[7].label, "> GM Reset");  r[7].value[0] = '\0';
 
-  drawRows(r, 8, songCursor);
+  drawRows(r, 8, songCursor, editing);
 }
 
 static void drawToast() {
@@ -436,13 +455,78 @@ static void drawToast() {
 //  PUBLIC
 // ---------------------------------------------------------------------------
 void begin() {
-  // I2C pins per the tested SH1106 setup (must precede u8g2.begin()).
+  // I2C pins for the SSD1309 panel (must precede u8g2.begin()).
   Wire.setSDA(PIN_OLED_SDA);
   Wire.setSCL(PIN_OLED_SCL);
   Wire.begin();
   Wire.setClock(OLED_I2C_HZ);
   u8g2.begin();
   u8g2.setContrast(160);
+}
+
+// LIVE on-screen VS1053 bring-up check (for UF2 builds with no serial monitor).
+// core1 keeps re-attempting the bring-up (GMSynth::serviceHealth), so this screen
+// re-reads the diagnostic globals every frame: wiggle a solder joint and watch it
+// flip from FAIL to "RT-MIDI OK" the instant the chip answers. Dismisses on any
+// key, ~3 s after it comes alive, or a 60 s safety timeout.
+void bootDiag() {
+#if GM_VS_DIAG
+  static const char spin[4] = { '|', '/', '-', '\\' };
+  uint32_t start = millis();
+  uint32_t aliveSince = 0;
+  uint8_t  frame = 0;
+
+  for (;;) {
+    bool     ok  = GMSynth::vsAlive;
+    uint16_t ver = GMSynth::vsVersion;
+    uint16_t aud = GMSynth::vsAudata;
+
+    char line[24], sc[2] = { spin[frame & 3], 0 };
+    snprintf(line, sizeof(line), "ver=%u  AUDATA=%04X", (unsigned)ver, (unsigned)aud);
+
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_6x10_tr);
+    u8g2.drawStr(0, 9, "VS1053 live scan");
+    u8g2.drawStr(122, 9, sc);                 // spinner = re-scanning
+    u8g2.drawHLine(0, 12, 128);
+    u8g2.setFont(u8g2_font_5x7_tr);
+    u8g2.drawStr(0, 24, line);
+    if (ok) {
+      u8g2.drawStr(0, 34, "RT-MIDI: OK !");
+      u8g2.drawStr(0, 46, "working - power-");
+      u8g2.drawStr(0, 54, "cycle for clean boot");
+    } else if (aud == 0x0000) {
+      u8g2.drawStr(0, 34, "FAIL: reads 0");
+      u8g2.drawStr(0, 46, "wiggle 5V/XRESET/");
+      u8g2.drawStr(0, 54, "MISO/XCS/SCK/MOSI");
+    } else if (aud == 0xFFFF) {
+      u8g2.drawStr(0, 34, "FAIL: MISO float");
+      u8g2.drawStr(0, 46, "wiggle MISO/XCS/");
+      u8g2.drawStr(0, 54, "SD-CS wiring");
+    } else {
+      u8g2.drawStr(0, 34, "FAIL: no SPI reply");
+      u8g2.drawStr(0, 46, "wiggle MISO/XCS/");
+      u8g2.drawStr(0, 54, "XDCS/RESET wiring");
+    }
+    u8g2.setFont(u8g2_font_4x6_tr);
+    u8g2.drawStr(0, 63, "any key to continue");
+    u8g2.sendBuffer();
+
+    Controls::update();
+    if (Controls::encClick() || Controls::playPressed() || Controls::pagePressed()
+        || Controls::trackPressed() || Controls::mutePressed()) break;
+
+    if (ok) {
+      if (aliveSince == 0) aliveSince = millis();
+      if (millis() - aliveSince > 3000) break;   // show OK ~3 s then continue
+    } else {
+      aliveSince = 0;
+    }
+    if (millis() - start > 60000) break;          // safety: never hang forever
+    frame++;
+    delay(120);
+  }
+#endif
 }
 
 void render() {
