@@ -54,11 +54,31 @@
 #define AUDIO_BACKEND_PWM  0
 
 #define AUDIO_RATE        22050  // output sample rate (Hz).  44100 is possible
-                                 // but leaves less CPU for polyphony.
+                                 // but leaves less CPU for polyphony (better on
+                                 // RP2350, which has a hardware FPU).
 #define AUDIO_BLOCK       64     // frames rendered per pump iteration
 #define SYNTH_MAX_VOICES  16     // simultaneous sample voices (polyphony cap)
 #define SYNTH_BEND_RANGE  2      // pitch-bend range in semitones (+/-)
-#define SYNTH_HEADROOM    1      // output right-shift to leave mix headroom
+#define SYNTH_HEADROOM    0      // output right-shift for mix headroom (0 = none;
+                                 // raise to 1 if dense chords clip on your font)
+
+// ---------------------------------------------------------------------------
+//  SOUNDFONT SELECTION  (pick exactly ONE)
+// ---------------------------------------------------------------------------
+//  FONT_SYNTHGMS     1.0 MB full General-MIDI set.  Baked into the sketch.
+//                    Fits the 4 MB and 16 MB boards.  Default.
+//  FONT_VINTAGEDREAMS 0.3 MB synth/vintage character set (banks 0 + 128).
+//  FONT_POWERGM      8.0 MB high-quality GM set.  TOO big to bake as a C array,
+//                    so it is read from a fixed flash region you write once with
+//                    picotool (needs a 16 MB board).  See README -> SoundFonts.
+#define FONT_SYNTHGMS      1
+#define FONT_VINTAGEDREAMS 0
+#define FONT_POWERGM       0
+
+// Flash-partition layout for FONT_POWERGM (XIP base is 0x10000000).  The font
+// is written at this byte offset with:  picotool load PowerGM_1.5.sf2 -o ADDR
+// Keep the sketch below this offset and the LittleFS above the font's end.
+#define FONT_FLASH_OFFSET  0x00200000UL   // 2 MB in: leaves room for the sketch
 
 // ---------------------------------------------------------------------------
 //  SEQUENCER LIMITS

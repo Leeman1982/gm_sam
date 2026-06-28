@@ -3,9 +3,23 @@
 // ============================================================================
 #include "Synth.h"
 #include "SF2.h"
-#include "Soundfont_VintageDreams.h"
 #include <math.h>
 #include <string.h>
+
+// ---- choose the baked / flashed SoundFont (see Config.h) -------------------
+#if FONT_SYNTHGMS
+  #include "Soundfont_SYNTHGMS.h"
+  #define FONT_PTR  g_sf2_SYNTHGMS
+  #define FONT_LEN  g_sf2_SYNTHGMS_len
+#elif FONT_VINTAGEDREAMS
+  #include "Soundfont_VintageDreams.h"
+  #define FONT_PTR  g_sf2_VintageDreams
+  #define FONT_LEN  g_sf2_VintageDreams_len
+#elif FONT_POWERGM
+  // Read straight from the flash region written by picotool (no C array).
+#else
+  #error "Select a SoundFont in Config.h (FONT_SYNTHGMS / _VINTAGEDREAMS / _POWERGM)"
+#endif
 
 namespace {
 
@@ -152,7 +166,18 @@ namespace Synth {
 bool begin(){
   for (int i = 0; i < 16; i++) ch_[i] = Channel();
   ch_[DRUM_CHANNEL - 1].bankMSB = 128;          // GM percussion bank
-  ready_ = SF2::begin(g_sf2_VintageDreams, (uint32_t)g_sf2_VintageDreams_len);
+
+#if FONT_POWERGM
+  // The font sits at a fixed XIP flash address; its length is the RIFF chunk
+  // size (bytes 4..7) + 8.  Validate the header before trusting it.
+  const uint8_t* base = (const uint8_t*)(0x10000000UL + FONT_FLASH_OFFSET);
+  uint32_t len = 0;
+  if (base[0]=='R'&&base[1]=='I'&&base[2]=='F'&&base[3]=='F')
+    len = ((uint32_t)base[4] | (base[5]<<8) | (base[6]<<16) | ((uint32_t)base[7]<<24)) + 8;
+  ready_ = SF2::begin(base, len);
+#else
+  ready_ = SF2::begin(FONT_PTR, (uint32_t)FONT_LEN);
+#endif
   return ready_;
 }
 

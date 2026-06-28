@@ -12,11 +12,22 @@ out an I2S DAC (or PWM). The sequencer, UI and control pinout are unchanged — 
 same per-track instrument/bank, volume, pan, octave and master-volume controls
 now address the on-chip synth.
 
-**First baked SoundFont:** *Vintage Dreams Waves v2.0* by Ian Wilson — a
-GM-layout bank of 128 melodic synth/vintage patches plus 8 drum kits (banks 0
-and 128, 136 presets, ~308 KB). It lives in flash and is read directly from
-memory-mapped XIP, so the sample data costs no RAM. More GM sets can be added
-and switched in (see *Adding more SoundFonts*).
+**Default SoundFont:** *SYNTHGMS* — a complete 1 MB General-MIDI set (128
+melodic programs + a drum kit, banks 0 and 128). It is baked into flash and read
+directly from memory-mapped XIP, so the sample data costs no RAM, and it fits
+both the 4 MB and 16 MB boards. Two more fonts ship ready to select in
+`Config.h` (see *SoundFonts* below):
+
+- **Vintage Dreams Waves v2.0** (0.3 MB) — characterful synth/vintage GM set.
+- **Power GM 1.5** (8 MB) — high-quality GM; needs a 16 MB board and is loaded
+  from a flash partition rather than baked (see the `picotool` steps below).
+
+### Target hardware
+
+Built for an **RP2040** board (e.g. the Raspberry Pi Pico, or a TENSTAR RP2040
+Pro Micro in its 4 MB / 16 MB flash variants). The code is kept portable to the
+**RP2350 / Pico 2**, which adds a hardware FPU — there you can raise
+`AUDIO_RATE` to 44100 and `SYNTH_MAX_VOICES` for more polyphony and headroom.
 
 ---
 
@@ -105,18 +116,50 @@ resolution than I2S, but needs no extra chip.
 
 ---
 
-## Adding more SoundFonts
+## SoundFonts
 
-The font is baked into flash as a C array by `tools/sf2_to_cpp.py`:
+Pick the active font in `Config.h` (exactly one of the `FONT_*` defines):
+
+| Define              | Font              | Size  | How it's stored        | Board   |
+|---------------------|-------------------|-------|------------------------|---------|
+| `FONT_SYNTHGMS`     | SYNTHGMS (GM)     | 1 MB  | baked C array          | 4/16 MB |
+| `FONT_VINTAGEDREAMS`| Vintage Dreams    | 0.3 MB| baked C array          | 4/16 MB |
+| `FONT_POWERGM`      | Power GM 1.5 (GM) | 8 MB  | flash partition        | 16 MB   |
+
+Use **16-bit PCM** SoundFonts (the reader streams `int16` straight from flash).
+Compressed SF2/SF3 (Ogg-Vorbis samples) are **not** supported.
+
+### Baking a small font (≤ ~1.5 MB)
+
+`tools/sf2_to_cpp.py` turns a `.sf2` into a flash-resident C array:
 
 ```
 python3 tools/sf2_to_cpp.py soundfonts/YourFont.sf2 --name YourFont --out .
 ```
 
-That writes `Soundfont_YourFont.cpp/.h`. To switch the active font, include that
-header in `Synth.cpp` and point `SF2::begin(...)` at its array. Keep fonts small
-(GM banks of a few hundred KB) so they fit alongside the sketch, and prefer
-16-bit PCM samples (the reader streams `int16` directly from flash).
+That writes `Soundfont_YourFont.cpp/.h`. Add a `FONT_YOURFONT` define and an
+`#elif` branch in `Synth.cpp` (mirroring the existing ones) to select it.
+
+### Loading a large font: Power GM 1.5 (8 MB, 16 MB board only)
+
+An 8 MB font is too big to compile as a C array, so it is written once to a
+fixed flash region and read in place from XIP:
+
+1. In `Config.h` set `FONT_POWERGM 1` (and the others to `0`).
+2. Build/upload the sketch as usual (it occupies the low ~0.4 MB of flash).
+3. Write the font once with [`picotool`](https://github.com/raspberrypi/picotool)
+   at the offset `FONT_FLASH_OFFSET` (default `0x200000` = 2 MB):
+
+   ```
+   picotool load soundfonts/PowerGM_1.5.sf2 -o 0x10200000
+   picotool reboot
+   ```
+
+   `0x10000000` is the RP2040 XIP base; `0x10200000` = base + 2 MB. The font
+   (8 MB) then lives at 2–10 MB, clear of the sketch below and the LittleFS song
+   partition above. The font survives ordinary sketch re-uploads (they only
+   rewrite the low flash). Adjust `FONT_FLASH_OFFSET` if your sketch ever grows
+   past 2 MB.
 
 ---
 
