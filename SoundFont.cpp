@@ -42,6 +42,17 @@ namespace {
   bool        g_ready    = false;
   char        g_bankName[24] = "none";
   uint8_t     g_masterGain128 = 120;
+  uint8_t     g_activeIndex = 0;
+
+  // ---- render gate for safe live bank swaps -------------------------------
+  // renderBlock() runs in the I2S DMA IRQ; serviceBankChange() runs in the
+  // core1 thread. Before freeing/reloading tsf, the thread clears
+  // g_renderEnabled and spins until any in-flight render leaves (g_inRender),
+  // so the IRQ never touches a tsf being torn down.
+  volatile bool    g_renderEnabled = true;
+  volatile bool    g_inRender      = false;
+  volatile bool    g_bankReq       = false;
+  volatile uint8_t g_bankReqIdx    = 0;
 
   // --- lock-free single-producer/single-consumer MIDI ring -----------------
   // Producer: main-loop/engine (queue*). Consumer: audio IRQ (renderBlock).
@@ -142,6 +153,7 @@ bool loadBank(uint8_t index) {
     tsf_channel_set_presetnumber(g_tsf, c, 0, (c == DRUM_CHANNEL - 1));
 
   setMasterGain(g_masterGain128);
+  g_activeIndex = index;
   g_ready = true;
   return true;
 #else
@@ -151,7 +163,32 @@ bool loadBank(uint8_t index) {
 }
 
 const char* activeBankName() { return g_bankName; }
-bool ready() { return g_ready; }
+uint8_t activeBankIndex()    { return g_activeIndex; }
+uint8_t bankCount()          { return Sf2Flash::count(); }
+bool ready()                 { return g_ready; }
+
+void requestBank(uint8_t index) {
+  g_bankReqIdx = index;
+  g_bankReq    = true;          // picked up by serviceBankChange() on core1
+}
+
+bool serviceBankChange() {
+  if (!g_bankReq) return false;
+  g_bankReq = false;
+  uint8_t idx = g_bankReqIdx;
+
+  // Gate the IRQ renderer off and wait for any in-flight render to finish, so
+  // tsf_close()/tsf_load_memory() never race the audio callback.
+  g_renderEnabled = false;
+  __sync_synchronize();
+  while (g_inRender) { tight_loop_contents(); }
+
+  loadBank(idx);               // closes old tsf, reads + parses the new bank
+
+  __sync_synchronize();
+  g_renderEnabled = true;
+  return true;                 // caller forces a full settings resend
+}
 
 // ---- producer-side queue API ------------------------------------------------
 void queueNoteOn (uint8_t ch, uint8_t note, uint8_t vel) { push(M_NOTE_ON,  ch, note, vel); }
@@ -178,21 +215,27 @@ void setMasterGain(uint8_t v0_127) {
 
 // ---- consumer-side render (audio IRQ context) -------------------------------
 void renderBlock(int16_t* out, int frames) {
+  g_inRender = true;
+  __sync_synchronize();
 #if HAVE_TSF
-  // Drain every queued event first so note-on/off align with this block.
-  while (g_tail != g_head) {
-    Msg m = g_ring[g_tail];
-    __sync_synchronize();
-    g_tail = (uint16_t)((g_tail + 1) & (RING_SZ - 1));
-    if (g_ready) apply(m);
-  }
-  if (g_ready) {
+  // Skip entirely while a bank swap is in progress (g_renderEnabled cleared) so
+  // we never touch a tsf instance being torn down.
+  if (g_renderEnabled && g_ready) {
+    // Drain every queued event first so note-on/off align with this block.
+    while (g_tail != g_head) {
+      Msg m = g_ring[g_tail];
+      __sync_synchronize();
+      g_tail = (uint16_t)((g_tail + 1) & (RING_SZ - 1));
+      apply(m);
+    }
     tsf_render_short(g_tsf, out, frames, 0);   // 0 = overwrite (not mixing)
+    g_inRender = false;
     return;
   }
 #endif
-  // No engine -> silence.
+  // No engine / mid-swap -> silence.
   for (int i = 0; i < frames * AUDIO_CHANNELS; ++i) out[i] = 0;
+  g_inRender = false;
 }
 
 } // namespace SoundFont

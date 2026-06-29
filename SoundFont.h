@@ -30,9 +30,20 @@ namespace SoundFont {
   bool begin();
 
   // Switch the active bank (index into the on-flash directory). Re-inits tsf.
+  // Call only when the renderer is gated (begin(), or via serviceBankChange()).
   bool loadBank(uint8_t index);
   const char* activeBankName();
+  uint8_t activeBankIndex();
+  uint8_t bankCount();
   bool ready();
+
+  // ---- runtime bank switching (A/B between banks) ----
+  // requestBank() is called from the UI (core0); it is non-blocking and just
+  // records the request. serviceBankChange() runs on core1 (loop1): it gates
+  // the audio renderer, performs the tsf swap, and returns true once a swap
+  // just completed (so the caller can force a full settings resend).
+  void requestBank(uint8_t index);
+  bool serviceBankChange();
 
   // ---- MIDI command queue (called from the sequencer / main-loop context) ----
   // channel is 1-based (1..16) to match the GMSynth API; converted internally.

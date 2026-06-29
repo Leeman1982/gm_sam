@@ -59,6 +59,7 @@ namespace {
   // page-routed edges, consumed by the getters
   bool playEdge = false, pageEdge = false, trackEdge = false, muteEdge = false;
   bool fieldCycleEdge = false;
+  bool bankCycleEdge = false;
   int  stepEdge = -1;          // KP_STEP: step index just pressed
   int  noteEdge = -1;          // KP_NOTE: key index just pressed
 
@@ -70,6 +71,7 @@ namespace {
         case 3:  kpPage = KP_STEP; break;   // 'A'
         case 7:  kpPage = KP_NOTE; break;   // 'B'
         case 11: kpPage = KP_CTRL; break;   // 'C'
+        case 15: bankCycleEdge = true; break; // 'D' -> cycle SF2 bank (A/B)
         default: break;                     // other shifted keys reserved
       }
       return;
@@ -174,6 +176,7 @@ bool trackLongPress() { return false; }
 int  keypadStep()        { return takeIdx(stepEdge); }
 int  keypadNote()        { return takeIdx(noteEdge); }
 bool fieldCyclePressed() { return takeEdge(fieldCycleEdge); }
+bool bankCyclePressed()  { return takeEdge(bankCycleEdge); }
 uint8_t keypadPage()     { return kpPage; }
 
 } // namespace Controls

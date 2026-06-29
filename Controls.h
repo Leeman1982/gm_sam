@@ -39,5 +39,6 @@ namespace Controls {
   int  keypadStep();        // KP_STEP: step index 0..15 just pressed, else -1
   int  keypadNote();        // KP_NOTE: key index 0..15 just pressed, else -1
   bool fieldCyclePressed(); // KP_CTRL: cycle the SEQ per-step field
+  bool bankCyclePressed();  // SHIFT + keypad 'D': cycle the active SF2 bank
   uint8_t keypadPage();     // current KeypadPage (drives the LEDs)
 }

@@ -9,6 +9,8 @@
 #include "Controls.h"
 #include "Storage.h"
 #include "GMNames.h"
+#include "SoundFont.h"
+#include "Sf2Flash.h"
 
 // ---- Display object (SH1106, hardware I2C, full frame buffer) --------------
 // Matches the tested setup: SH1106 128x64, U8g2, HW I2C on Wire (I2C0).
@@ -263,6 +265,21 @@ void handleInput() {
     Track& tr = seq.data.tracks[currentTrack];
     tr.stepField = (tr.stepField + 1) % SF_COUNT;
     toast(kFieldName[tr.stepField]);
+  }
+  // SHIFT + keypad 'D': A/B the SF2 banks on the flash module. The swap itself
+  // happens safely on core1 (serviceBankChange); here we just request it.
+  if (Controls::bankCyclePressed()) {
+    uint8_t n = SoundFont::bankCount();
+    if (n > 1) {
+      uint8_t next = (uint8_t)((SoundFont::activeBankIndex() + 1) % n);
+      SoundFont::requestBank(next);
+      char nm[16], m[22];
+      if (Sf2Flash::bankName(next, nm, sizeof(nm))) snprintf(m, sizeof(m), "BANK:%s", nm);
+      else                                          snprintf(m, sizeof(m), "BANK %d", next + 1);
+      toast(m);
+    } else {
+      toast("ONLY 1 BANK");
+    }
   }
 }
 

@@ -59,6 +59,21 @@ namespace {
 namespace Sf2Flash {
 
 bool ready() { return g_ready; }
+uint8_t count() { return g_ready ? (uint8_t)g_dir.count : 0; }
+
+bool bankName(uint8_t index, char* buf, size_t len) {
+  if (!g_ready || index >= g_dir.count || !buf || !len) return false;
+  uint32_t addr = SF2_DIR_OFFSET + sizeof(DirHdr) + (uint32_t)index * sizeof(Entry);
+  Entry e;
+#if SF2_USE_MMAP
+  memcpy(&e, (const void*)(SF2_FLASH_MMAP_BASE + addr), sizeof(e));
+#else
+  read(addr, &e, sizeof(e));
+#endif
+  strncpy(buf, e.name, len - 1);
+  buf[len - 1] = '\0';
+  return true;
+}
 
 bool begin() {
   pinMode(PIN_FLASH_CS, OUTPUT);

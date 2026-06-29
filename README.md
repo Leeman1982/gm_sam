@@ -125,6 +125,9 @@ remove the RAM cost on its own.)
        VintageDreams:soundfonts/Vintage_Dreams_Waves_130_sounds.sf2
    ```
    Add ` Merlin:Merlin_slim.sf2` as a second entry once you've slimmed it.
+   Pack two or more banks to **A/B them live** with SHIFT + keypad **D**
+   (the swap briefly mutes audio while the new bank loads, then resends every
+   track's program/volume/pan automatically).
 2. Write `sf2_image.bin` to **address 0** of the external SPI flash with your
    programmer. On first boot `Sf2Flash` reads the directory and `SoundFont`
    loads `SF2_DEFAULT_BANK` (0 = Vintage Dreams). Change the default in
@@ -143,6 +146,7 @@ the old hardware buttons. **Hold the encoder switch = SHIFT.**
 | SHIFT (hold) + rotate| change the value at the cursor                               |
 | Tap encoder          | primary action (SEQ: toggle step · SONG: run the action row) |
 | SHIFT + keypad A/B/C | select keypad page **STEP / NOTE / CTRL** (LEDs follow)      |
+| SHIFT + keypad D     | cycle the active SF2 bank (A/B between packed banks)         |
 
 ### Keypad pages (shown one-hot on the 3 LEDs)
 

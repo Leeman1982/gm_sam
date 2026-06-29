@@ -23,6 +23,8 @@ namespace Sf2Flash {
 
   bool begin();                       // init SPI flash (or mmap window), read dir
   bool ready();
+  uint8_t count();                    // number of banks in the on-flash directory
+  bool    bankName(uint8_t index, char* buf, size_t len);  // dir-only, no blob load
 
   // Provide a pointer + size for bank `index`, plus its name for the UI.
   // In RAM mode this reads the bank into RAM (freeing any previous bank).

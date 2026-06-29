@@ -71,4 +71,7 @@ void setup1() {
 
 void loop1() {
   seq.engineService();              // tight real-time loop (never blocks long)
+  // Apply a pending live bank swap (gates audio, reloads tsf); on success force
+  // a full settings resend so the new tsf gets every track's program/vol/pan.
+  if (SoundFont::serviceBankChange()) seq.resendAll();
 }
