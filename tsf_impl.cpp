@@ -6,11 +6,11 @@
 //  heavy code is emitted once and the build options live in one place.
 //
 //  IMPORTANT - RAM: mainline TinySoundFont loads an SF2 and expands every PCM
-//  sample to a 32-bit float in RAM (tsf::fontSamples). So the bank you put on
-//  the flash MUST be slimmed (in Polyphone) until its float-expanded sample
-//  data plus tsf overhead fits the RP2350's free RAM (budget a couple hundred
-//  KB of samples). The full 28 MB OPL2/Merlin banks will NOT load as-is. See
-//  the README "Flash & RAM reality" section.
+//  sample to a 32-bit float in RAM (tsf::fontSamples), so a bank's float-
+//  expanded samples must fit the RP2350's free RAM. The default bank,
+//  Vintage Dreams Waves (~314 KB, 130 sounds), is compact and fits. A large
+//  bank (e.g. the 28 MB Merlin GM) must first be slimmed in Polyphone. See the
+//  README "Flash & RAM reality" section.
 // ============================================================================
 #if __has_include("tsf.h")
   #define TSF_IMPLEMENTATION

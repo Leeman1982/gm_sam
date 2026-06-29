@@ -8,9 +8,9 @@
 //  MEMORY REALITY (read this!)
 //  ---------------------------
 //  Mainline tsf_load_memory() expands every SF2 sample to a 32-bit float in
-//  RAM. The RP2350 has ~520 KB, so the active bank must be SLIMMED (Polyphone)
-//  until its float-expanded samples fit free RAM - budget a couple hundred KB
-//  of sample data. The full 28 MB OPL2/Merlin banks will NOT load as-is.
+//  RAM. The RP2350 has ~520 KB, so the active bank's float-expanded samples
+//  must fit free RAM. The default Vintage Dreams Waves bank (~314 KB) fits; a
+//  large bank (e.g. the 28 MB Merlin GM) must first be SLIMMED in Polyphone.
 //
 //  Sf2Flash hands us the bank as a contiguous pointer + size. In the default
 //  RAM mode it reads the (slimmed) bank from the external SPI flash into a heap

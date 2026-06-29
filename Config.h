@@ -84,7 +84,7 @@ static const uint8_t kKeypadColPins[KEYPAD_COLS] = { 20, 21, 22, 26 };
 #define SF2_USE_MMAP          0
 #define SF2_FLASH_MMAP_BASE   0x11000000UL   // RP2350 QMI CS1 window (if mapped)
 #define SF2_DIR_OFFSET        0x00000000UL   // bank directory at flash start
-#define SF2_DEFAULT_BANK      0              // 0 = OPL2 FM (Adlib), 1 = Merlin GM
+#define SF2_DEFAULT_BANK      0              // 0 = Vintage Dreams Waves, 1 = Merlin GM
 
 // ---------------------------------------------------------------------------
 //  SEQUENCER LIMITS

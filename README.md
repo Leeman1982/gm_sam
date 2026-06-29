@@ -98,33 +98,37 @@ silence (you'll see a compile warning).
 ## Flash & RAM reality (important)
 
 Mainline TinySoundFont loads an SF2 and **expands every sample to a 32-bit float
-in RAM**. The RP2350 has ~520 KB, so a bank must be **slimmed to fit**:
+in RAM**. The RP2350 has ~520 KB, so a bank's float-expanded samples must fit:
 
-- The supplied `OPL2_FM_v2_FAT_Adlib.sf2` and `Merlin_GM_V1.2_Bank.sf2` are
-  **~28 MB each** — they will *not* load as-is.
-- In **Polyphone** (free SF2 editor): remove unused presets, downsample/trim
-  samples, and export a slim bank. Budget roughly **≤ ~200–250 KB of sample
-  data** (it ~doubles as float) so it fits alongside the rest of the firmware.
-- Keep it General-MIDI-shaped (preset 0 = melodic default, bank 128 = drums) so
-  the INST page program names line up.
+- The **default bank, `soundfonts/Vintage_Dreams_Waves_130_sounds.sf2`** (~314 KB,
+  130 GM-style sounds), is compact and **fits as-is** — no slimming needed. It's
+  committed in `soundfonts/` so the packing step below runs out of the box.
+- A **large** bank like `Merlin_GM_V1.2_Bank.sf2` (~28 MB) will *not* load as-is.
+  Slim it in **Polyphone** (free SF2 editor): remove unused presets,
+  downsample/trim samples, export. Budget roughly **≤ ~200–250 KB of sample
+  data** (it ~doubles as float) so it fits alongside the firmware.
+- Keep a bank General-MIDI-shaped (preset 0 = melodic default, bank 128 = drums)
+  so the INST page program names line up.
 
-The external flash module then just *stores* the slim bank for the SF2 reader;
-its large capacity isn't the bottleneck — RAM is. (An advanced
-memory-mapped/streaming-tsf path is stubbed in `Sf2Flash.cpp` /
-`Config.h SF2_USE_MMAP` for a future large-bank build, but mainline tsf still
-copies samples to float, so it doesn't remove the RAM cost on its own.)
+The external flash module just *stores* the bank for the SF2 reader; its large
+capacity isn't the bottleneck — RAM is. (An advanced memory-mapped/streaming-tsf
+path is stubbed in `Sf2Flash.cpp` / `Config.h SF2_USE_MMAP` for a future
+large-bank build, but mainline tsf still copies samples to float, so it doesn't
+remove the RAM cost on its own.)
 
 ### Flashing the SF2 bank
 
-1. Slim your `.sf2` files as above.
-2. Pack them into a flash image (order = bank index; keep OPL2 at index 0):
+1. Pack one or more banks into a flash image (order = bank index; keep
+   Vintage Dreams at index 0 to match the firmware default):
    ```
    python3 tools/pack_sf2.py -o sf2_image.bin \
-       OPL2:OPL2_slim.sf2  Merlin:Merlin_slim.sf2
+       VintageDreams:soundfonts/Vintage_Dreams_Waves_130_sounds.sf2
    ```
-3. Write `sf2_image.bin` to **address 0** of the external SPI flash with your
+   Add ` Merlin:Merlin_slim.sf2` as a second entry once you've slimmed it.
+2. Write `sf2_image.bin` to **address 0** of the external SPI flash with your
    programmer. On first boot `Sf2Flash` reads the directory and `SoundFont`
-   loads `SF2_DEFAULT_BANK` (0 = OPL2). Change the default in `Config.h`.
+   loads `SF2_DEFAULT_BANK` (0 = Vintage Dreams). Change the default in
+   `Config.h`.
 
 ---
 

@@ -9,11 +9,12 @@
 #     ...      : each bank blob, 4 KB-aligned, at its recorded offset
 #
 #  Bank index order on the command line == index used by SF2_DEFAULT_BANK and
-#  the UI. Keep OPL2 first (index 0) to match the firmware default.
+#  the UI. Keep Vintage Dreams first (index 0) to match the firmware default.
 #
 #  USAGE
 #     python3 pack_sf2.py -o sf2_image.bin \
-#         OPL2:OPL2_FM_v2_FAT_Adlib.sf2  Merlin:Merlin_GM_V1.2_Bank.sf2
+#         VintageDreams:soundfonts/Vintage_Dreams_Waves_130_sounds.sf2 \
+#         Merlin:Merlin_GM_V1.2_Bank.sf2
 #
 #  Then flash sf2_image.bin to your external SPI flash chip at address 0 with
 #  your programmer (e.g. flashrom, an esptool-style writer, or a dedicated SPI
