@@ -60,7 +60,7 @@ namespace {
   struct Msg { uint8_t type, a, b, c; };
   enum : uint8_t {
     M_NOTE_ON = 1, M_NOTE_OFF, M_CC, M_PROGRAM, M_BANK,
-    M_PITCH, M_ALLOFF, M_PANIC, M_RESET
+    M_PITCH, M_ALLOFF, M_PANIC, M_RESET, M_MASTER
   };
 
   constexpr uint16_t RING_SZ = 256;           // 256 msgs in flight (power of 2)
@@ -92,10 +92,16 @@ namespace {
       case M_CC:
         tsf_channel_midi_control(g_tsf, ch, m.b, m.c);
         break;
-      case M_PROGRAM:
+      case M_PROGRAM: {
         // drum flag set for the GM percussion channel (1-based 10 -> ch 9)
-        tsf_channel_set_presetnumber(g_tsf, ch, m.b, (m.a == DRUM_CHANNEL));
+        bool drums = (m.a == DRUM_CHANNEL);
+        int ok = tsf_channel_set_presetnumber(g_tsf, ch, m.b, drums);
+        // If the bank lacks this melodic preset, fall back to GM preset 0 so the
+        // channel still makes sound rather than going silent. (A missing drum
+        // bank can't fall back meaningfully - use a GM-complete SF2 for drums.)
+        if (!ok && !drums) tsf_channel_set_bank_preset(g_tsf, ch, 0, 0);
         break;
+      }
       case M_BANK:
         tsf_channel_set_bank(g_tsf, ch, m.b);
         break;
@@ -117,6 +123,9 @@ namespace {
           tsf_channel_set_presetnumber(g_tsf, c, 0, (c == DRUM_CHANNEL - 1));
           tsf_channel_set_bank(g_tsf, c, 0);
         }
+        break;
+      case M_MASTER:
+        tsf_set_volume(g_tsf, m.b / 127.0f);   // GM master volume (0..127)
         break;
     }
   }
@@ -152,7 +161,7 @@ bool loadBank(uint8_t index) {
   for (int c = 0; c < 16; ++c)
     tsf_channel_set_presetnumber(g_tsf, c, 0, (c == DRUM_CHANNEL - 1));
 
-  setMasterGain(g_masterGain128);
+  tsf_set_volume(g_tsf, g_masterGain128 / 127.0f);   // direct: render not live here
   g_activeIndex = index;
   g_ready = true;
   return true;
@@ -207,10 +216,8 @@ void queuePitch(uint8_t ch, int16_t bend14) {
 }
 
 void setMasterGain(uint8_t v0_127) {
-  g_masterGain128 = v0_127;
-#if HAVE_TSF
-  if (g_tsf) tsf_set_volume(g_tsf, v0_127 / 127.0f);
-#endif
+  g_masterGain128 = v0_127;          // remembered so loadBank can re-apply it
+  push(M_MASTER, v0_127, 0, 0);      // applied in the render context, race-free
 }
 
 // ---- consumer-side render (audio IRQ context) -------------------------------

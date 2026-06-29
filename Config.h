@@ -68,9 +68,13 @@ static const uint8_t kKeypadColPins[KEYPAD_COLS] = { 20, 21, 22, 26 };
 // ---------------------------------------------------------------------------
 #define AUDIO_SAMPLE_RATE  44100    // SF2 render + I2S sample rate (Hz)
 #define AUDIO_CHANNELS     2        // stereo to the PCM5100A
-#define AUDIO_BLOCK_FRAMES 256      // stereo frames per DMA buffer
+#define AUDIO_BLOCK_FRAMES 128      // stereo frames per DMA buffer (~2.9 ms);
+                                    //   smaller = lower latency, less underrun margin
 #define SYNTH_MAX_VOICES   24       // polyphony ceiling (tune to CPU headroom)
-#define SYNTH_GAIN_DB      (-3.0f)  // global SoundFont output gain (headroom)
+// Global render gain. tsf SUMS voices then HARD-CLAMPS to int16, so dense GM
+// chords distort if this is too hot. -9 dB leaves headroom; raise toward 0 for
+// more level if your patterns are sparse, lower if you hear clipping.
+#define SYNTH_GAIN_DB      (-9.0f)
 
 // ---------------------------------------------------------------------------
 //  SF2 BANK SOURCE (external flash)

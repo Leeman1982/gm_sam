@@ -135,6 +135,40 @@ remove the RAM cost on its own.)
 
 ---
 
+## Getting GM to sound right (read if instruments sound wrong)
+
+Most "GM doesn't sound correct" problems are the **soundfont**, not the synth:
+
+- **Vintage Dreams Waves is a synth/waveform bank, not faithful GM timbres.**
+  It follows a GM-ish layout, but its "Acoustic Grand Piano" is a synth patch,
+  not a real piano, and it has **no proper GM percussion bank**, so the drum
+  track (channel 10) will be silent or odd. It sounds great for pads/synth work;
+  it is *not* the bank to pick if you want recognisable GM instruments.
+- **For recognisable General MIDI, use a real GM bank** (e.g. a slimmed
+  `Merlin_GM`, or GeneralUser GS) that includes all 128 melodic presets **and**
+  a percussion set at bank 128. The catch is RAM: tsf float-expands samples, so
+  a full high-quality GM set won't fit 520 KB. Slim it in Polyphone (drop unused
+  presets, downsample, mono-ize) until it loads. There is a real fidelity vs RAM
+  trade-off here on this MCU — a small GM bank means GM mapping is correct but
+  samples are lower quality.
+- **Channel 10 is drums.** The drum track only sounds if the bank has bank-128
+  percussion. The firmware sets the drum flag automatically; the bank must have
+  the content.
+- **Distorted on dense chords?** Lower `SYNTH_GAIN_DB` in `Config.h` (tsf sums
+  voices then hard-clamps to 16-bit). **Too quiet?** Raise the FX-page Master
+  Volume or `SYNTH_GAIN_DB`.
+- **Clicks / dropouts?** That's an audio underrun. Lower `SYNTH_MAX_VOICES` or
+  raise `AUDIO_BLOCK_FRAMES`. Confirm BCLK/LRCLK are adjacent GPIOs and the
+  DAC's MCLK pin is left unconnected.
+- **A whole channel is silent** but others play? Its program isn't in the bank;
+  melodic channels fall back to GM preset 0, drums do not (see above).
+
+Bottom line: this firmware drives the SF2 correctly (verified against the tsf
+and I2S APIs). Whether GM "sounds right" is mostly down to loading a genuine,
+GM-complete bank that fits RAM.
+
+---
+
 ## Control surface
 
 The encoder is the primary editor; the keypad adds fast step entry and replaces
