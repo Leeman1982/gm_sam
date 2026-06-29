@@ -1,21 +1,28 @@
 // ============================================================================
-//  GM_Sequencer.ino  -  Dual-core GM step sequencer for the Dream SAM2695
+//  GM_Sequencer.ino  -  Dual-core GM step sequencer with INTERNAL SoundFont synth
 //
-//  Target : Raspberry Pi Pico (RP2040), Earle Philhower arduino-pico core.
-//  Build  : select your Pico board, set Flash Size to a layout WITH a
-//           filesystem partition (e.g. "2MB (Sketch 1MB / FS 1MB)") so song
-//           save/load works. Install the "U8g2" library.
+//  Target : Raspberry Pi Pico 2 (RP2350), Earle Philhower arduino-pico core.
+//  Build  : select Raspberry Pi Pico 2, pick a Flash Size layout WITH a
+//           filesystem partition (Sketch + FS) so song save/load works.
+//           Install libraries: "U8g2", the bundled "I2S" (arduino-pico), and
+//           add TinySoundFont's "tsf.h" to this folder (see README).
 //
 //  CORE SPLIT
-//    core0 : UI (SH1106) + encoder/buttons + LittleFS storage.
-//    core1 : real-time transport + the ONLY core that drives the MIDI UART.
-//  The two cores share state through the single global `seq` instance using
-//  atomic scalar fields and volatile request flags (see Sequencer.h).
+//    core0 : UI (SH1106) + encoder/keypad/LEDs + LittleFS song storage.
+//    core1 : real-time sequencer transport. It also brings up the SoundFont
+//            engine + I2S audio; the actual audio render runs in the I2S DMA
+//            interrupt and pulls note events from the engine through a
+//            lock-free ring (see SoundFont.cpp), so it never starves.
+//  The two cores share pattern state through the single global `seq` instance
+//  using atomic scalar fields and volatile request flags (see Sequencer.h).
 // ============================================================================
 #include <Arduino.h>
 #include "Config.h"
 #include "Sequencer.h"
 #include "GMSynth.h"
+#include "SoundFont.h"
+#include "AudioOut.h"
+#include "Sf2Flash.h"
 #include "Controls.h"
 #include "Storage.h"
 #include "UI.h"
@@ -51,10 +58,13 @@ void loop() {
 }
 
 // ----------------------------------------------------------------------------
-//  CORE 1  -  real-time engine (owns Serial1 / MIDI)
+//  CORE 1  -  real-time engine + SoundFont/I2S audio bring-up
 // ----------------------------------------------------------------------------
 void setup1() {
-  GMSynth::begin();                 // Serial1 @ 31250 + GM reset
+  Sf2Flash::begin();                // external SPI flash holding the SF2 bank(s)
+  SoundFont::begin();               // load the default bank + init tsf
+  AudioOut::begin();                // start I2S streaming (DMA IRQ renders audio)
+  GMSynth::begin();                 // no-op now; kept for symmetry
   while (!g_songReady) delay(1);    // wait for core0 to initialise the song
   seq.engineBegin();                // arms timing + queues a full resend
 }

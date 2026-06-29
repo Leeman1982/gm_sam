@@ -1,9 +1,15 @@
 // ============================================================================
-//  GMSynth.h  -  Dream SAM2695 serial-MIDI driver
+//  GMSynth.h  -  GM voice backend (UNCHANGED API, SoundFont implementation)
 //
-//  Thin, allocation-free wrapper over Serial1 (UART0 @ 31250 baud).
-//  IMPORTANT: only ONE core may call these functions. In this project that is
-//  core1 (the sequencer engine). core0 never touches the UART.
+//  Historically this drove a Dream SAM2695 over serial MIDI. It now drives the
+//  INTERNAL SoundFont engine (SoundFont.cpp -> tsf -> I2S DAC). The public API
+//  is identical so the sequencer engine and UI did not change: every voice
+//  still flows through these calls.
+//
+//  The calls are non-blocking: they push MIDI messages into the SoundFont
+//  engine's lock-free ring, which the audio render context consumes. The MIDI
+//  real-time helpers (clockTick/start/stop/cont) are no-ops now - there is no
+//  external gear to clock.
 // ============================================================================
 #pragma once
 #include <Arduino.h>
@@ -11,7 +17,8 @@
 
 namespace GMSynth {
 
-  // Bring up Serial1 on the configured pins and reset the SAM2695 to GM mode.
+  // Retained for symmetry. The SoundFont engine + I2S audio are brought up from
+  // the sketch (SoundFont::begin / AudioOut::begin); this is now a no-op.
   void begin();
 
   // ---- Channel voice messages (channel is 1-based, 1..16) ----

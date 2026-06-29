@@ -1,92 +1,71 @@
 // ============================================================================
-//  GMSynth.cpp  -  Dream SAM2695 serial-MIDI driver implementation
+//  GMSynth.cpp  -  GM voice backend, now backed by the internal SoundFont engine
+//
+//  Each function maps the old SAM2695 serial-MIDI call onto a SoundFont engine
+//  queue call. The signatures and channel convention (1-based 1..16) are
+//  unchanged, so Sequencer.cpp / UI.cpp compile and behave the same - only the
+//  sound source moved from an external chip to an on-flash SF2 bank.
 // ============================================================================
 #include "GMSynth.h"
+#include "SoundFont.h"
 
 namespace {
-  inline uint8_t st(uint8_t status, uint8_t ch) {  // status nibble + channel(1..16)
-    if (ch < 1)  ch = 1;
-    if (ch > 16) ch = 16;
-    return status | (uint8_t)(ch - 1);
-  }
   inline uint8_t clamp7(int v) { return (uint8_t)(v < 0 ? 0 : (v > 127 ? 127 : v)); }
 }
 
 namespace GMSynth {
 
 void begin() {
-  Serial1.setTX(PIN_MIDI_TX);
-  Serial1.setRX(PIN_MIDI_RX);    // reserved for future external-sync input
-  Serial1.setFIFOSize(256);      // generous TX/RX FIFO so writes never block
-  Serial1.begin(31250);
-  delay(60);                     // let the SAM2695 finish power-on
-  gmReset();
-  delay(20);
-  masterVolume(120);
+  // The audio path (SoundFont::begin + AudioOut::begin) is brought up from the
+  // sketch setup(); nothing to do here. Kept so existing call sites still link.
 }
 
 void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
-  Serial1.write(st(0x90, ch));
-  Serial1.write(clamp7(note));
-  Serial1.write(clamp7(vel));
+  SoundFont::queueNoteOn(ch, clamp7(note), clamp7(vel));
 }
 
 void noteOff(uint8_t ch, uint8_t note) {
-  Serial1.write(st(0x80, ch));
-  Serial1.write(clamp7(note));
-  Serial1.write((uint8_t)0x40);  // release velocity 64
+  SoundFont::queueNoteOff(ch, clamp7(note));
 }
 
 void controlChange(uint8_t ch, uint8_t cc, uint8_t value) {
-  Serial1.write(st(0xB0, ch));
-  Serial1.write(clamp7(cc));
-  Serial1.write(clamp7(value));
+  SoundFont::queueCC(ch, clamp7(cc), clamp7(value));
 }
 
 void programChange(uint8_t ch, uint8_t program) {
-  Serial1.write(st(0xC0, ch));
-  Serial1.write(clamp7(program));
+  SoundFont::queueProgram(ch, clamp7(program));
 }
 
 void pitchBend(uint8_t ch, int16_t bend14) {
-  int v = bend14 + 8192;                 // 0..16383, centre 8192
-  if (v < 0) v = 0; if (v > 16383) v = 16383;
-  Serial1.write(st(0xE0, ch));
-  Serial1.write((uint8_t)(v & 0x7F));    // LSB
-  Serial1.write((uint8_t)((v >> 7) & 0x7F)); // MSB
+  SoundFont::queuePitch(ch, bend14);
 }
 
-void bankSelect(uint8_t ch, uint8_t bankMSB) { controlChange(ch, 0,  bankMSB); }
+// ---- convenience wrappers (now plain CC / engine calls) --------------------
+void bankSelect(uint8_t ch, uint8_t bankMSB) { SoundFont::queueBank(ch, bankMSB); }
 void setVolume   (uint8_t ch, uint8_t v)     { controlChange(ch, 7,  v); }
 void setPan      (uint8_t ch, uint8_t v)     { controlChange(ch, 10, v); }
 void setExpression(uint8_t ch, uint8_t v)    { controlChange(ch, 11, v); }
 void setModulation(uint8_t ch, uint8_t v)    { controlChange(ch, 1,  v); }
-void setReverbSend(uint8_t ch, uint8_t v)    { controlChange(ch, 91, v); }   // CC0x5B
-void setChorusSend(uint8_t ch, uint8_t v)    { controlChange(ch, 93, v); }   // CC0x5D
-void setReverbType(uint8_t ch, uint8_t t)    { controlChange(ch, 80, t & 7); } // CC0x50
-void setChorusType(uint8_t ch, uint8_t t)    { controlChange(ch, 81, t & 7); } // CC0x51
+// Reverb/chorus sends + types: tsf has no global reverb/chorus, so these are
+// accepted (and stored in the Song) but not yet audible. CC91/CC93 are passed
+// through; tsf ignores unknown controllers safely. Kept so the MIX/FX UI works.
+void setReverbSend(uint8_t ch, uint8_t v)    { controlChange(ch, 91, v); }
+void setChorusSend(uint8_t ch, uint8_t v)    { controlChange(ch, 93, v); }
+void setReverbType(uint8_t ch, uint8_t t)    { (void)ch; (void)t; }
+void setChorusType(uint8_t ch, uint8_t t)    { (void)ch; (void)t; }
 
-void clockTick() { Serial1.write((uint8_t)0xF8); }
-void start()     { Serial1.write((uint8_t)0xFA); }
-void stop()      { Serial1.write((uint8_t)0xFC); }
-void cont()      { Serial1.write((uint8_t)0xFB); }
+// ---- real-time / system ----------------------------------------------------
+// No external gear to clock, so these do nothing now.
+void clockTick() {}
+void start()     {}
+void stop()      {}
+void cont()      {}
 
-void allNotesOff(uint8_t ch) { controlChange(ch, 123, 0); }
-void allSoundOff(uint8_t ch) { controlChange(ch, 120, 0); }
+void allNotesOff(uint8_t ch) { SoundFont::queueAllOff(ch); }
+void allSoundOff(uint8_t ch) { SoundFont::queueAllOff(ch); }
+void panic()                 { SoundFont::queuePanic(); }
 
-void panic() {
-  for (uint8_t ch = 1; ch <= 16; ch++) { allSoundOff(ch); allNotesOff(ch); }
-}
-
-void gmReset() {
-  static const uint8_t sx[] = { 0xF0, 0x7E, 0x7F, 0x09, 0x01, 0xF7 };
-  Serial1.write(sx, sizeof(sx));
-}
-
-void masterVolume(uint8_t v) {
-  v = clamp7(v);
-  uint8_t sx[] = { 0xF0, 0x7F, 0x7F, 0x04, 0x01, 0x00, v, 0xF7 };
-  Serial1.write(sx, sizeof(sx));
-}
+void gmReset()                { SoundFont::queueReset(); }
+void masterVolume(uint8_t v)  { SoundFont::setMasterGain(clamp7(v)); }
 
 } // namespace GMSynth

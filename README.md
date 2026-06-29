@@ -1,154 +1,216 @@
-# GM Sequencer — RP2040 + Dream SAM2695
+# GM Sequencer — Pico 2 (RP2350) + internal SoundFont synth
 
-A professional dual-core MIDI step sequencer for the Raspberry Pi Pico (RP2040)
-that drives a Dream **SAM2695** General-MIDI module (the AliExpress "GM 2.0
-synthesis module"). 16 tracks, 64 steps, per-step micro-timing/probability,
-rock-solid drift-free timing, and a clear SH1106 OLED UI.
+A dual-core MIDI step sequencer for the **Raspberry Pi Pico 2 (RP2350)** with an
+**internal SoundFont (SF2) synthesizer** as its voice engine — no external GM
+module. 16 tracks, 64 steps, per-step micro-timing/probability, drift-free
+timing, an SH1106 OLED UI, a rotary-encoder + 4×4-keypad control surface, and
+stereo audio out through a **PCM5100A I2S DAC**. SF2 banks live on an external
+SPI flash module; songs live in the Pico's on-board LittleFS.
 
-The SAM2695 is a 64-voice GM/GS/MT-32 synth-on-a-chip with onboard reverb +
-chorus and a 4-band EQ, controlled over standard serial MIDI at 31250 baud.
-This firmware exposes that feature set: per-track instrument/bank, volume, pan,
-reverb & chorus sends, global reverb/chorus types and master volume, plus a GM
-reset.
+> Previously this firmware drove a Dream SAM2695 over serial MIDI. **Only the
+> backend changed.** Every voice still flows through the `GMSynth::` API, so the
+> sequencer engine and UI are unchanged — `GMSynth` now renders SF2 voices to
+> the I2S DAC instead of sending MIDI to a chip. See `SoundFont.cpp`.
 
 ---
 
 ## Architecture
 
-Two cores, no locks in the audio path:
+Two cores, lock-free audio:
 
-- **core1 — engine.** Owns all timing and is the *only* core that touches the
-  MIDI UART. Internal resolution is **96 PPQN** with a drift-free integer tick
-  accumulator (no floats in the hot loop). Emits MIDI clock (0xF8) on the
-  24-PPQN grid plus Start/Stop/Continue — the foundation for future external
-  sync. An event scheduler handles note on/off with swing and per-step micro
-  offsets (offs fire before ons at the same tick).
-- **core0 — UI.** SH1106 rendering (~30 fps), encoder + buttons, and LittleFS
-  song storage.
+- **core1 — engine + audio bring-up.** Owns the 96-PPQN drift-free transport
+  (integer tick accumulator, no floats in the hot loop). It also starts the
+  SoundFont engine and I2S output. Note events from the engine are pushed into a
+  **lock-free single-producer/single-consumer ring**; the actual SF2 rendering
+  happens in the **I2S DMA interrupt**, which drains the ring and renders a
+  stereo block. Audio therefore never starves on the engine's timing waits.
+- **core0 — UI.** SH1106 rendering (~30 fps), the encoder + keypad + page LEDs,
+  and LittleFS song storage.
 
-Cross-core sharing uses single aligned 8/16-bit scalars (atomic on the M0+) and
-volatile request flags. Setting changes are reconciled to MIDI each engine pass,
-so edits are audible immediately.
+```
+ sequencer engine ──GMSynth::──▶ SoundFont queue ──ring──▶ I2S DMA IRQ
+   (core1)                         (lock-free)              renderBlock() ─▶ PCM5100A
+```
 
----
-
-## Wiring
-
-All buttons and the encoder are **active-low** with internal pull-ups — wire the
-common side to **GND**.
-
-| Signal            | Pico pin | Notes                                        |
-|-------------------|----------|----------------------------------------------|
-| MIDI TX → module  | GP0      | UART0 TX to the SAM2695 MIDI-IN / RX pad     |
-| MIDI RX (future)  | GP1      | reserved for external clock-sync input       |
-| OLED SDA          | GP4      | I2C0                                          |
-| OLED SCL          | GP5      | I2C0, 400 kHz                                 |
-| Encoder A         | GP6      | quadrature (interrupt-driven)                 |
-| Encoder B         | GP7      | quadrature                                    |
-| Encoder switch    | GP8      | push                                          |
-| PLAY button       | GP9      | start/stop (SHIFT = from top)                 |
-| SHIFT button      | GP10     | modifier (hold)                               |
-| PAGE button       | GP11     | next page (SHIFT = previous)                  |
-| TRACK button      | GP12     | next track (SHIFT = prev, long = clear)       |
-| MUTE button       | GP13     | mute (SHIFT = solo)                           |
-| CLICK OUT (future)| GP14     | reserved analog gate-sync pulse               |
-
-Power the SAM2695 and OLED per their own requirements; share a common ground
-with the Pico. Add a series resistor on the MIDI line per the module's docs if
-it expects an opto-isolated/standard MIDI input.
-
-### Using an Arduino-style MIDI shield (DIN-5 IN/OUT/THRU)
-
-A generic opto-isolated MIDI shield gives you proper DIN-5 sockets; drive the
-SAM2695 from its MIDI OUT. Wire it by **function**, not by the silkscreen pin
-number — these shields use the Arduino convention where pad 0 = RX and pad 1 =
-TX, and MIDI OUT is driven by the TX (D1) pad:
-
-| Pico pin     | Shield pad            | Why                                  |
-|--------------|-----------------------|--------------------------------------|
-| GP0 (TX)     | "1 / TX" pad          | drives MIDI OUT (→ SAM2695 MIDI IN)  |
-| GP1 (RX)     | "0 / RX" pad          | opto output (future clock sync-in)   |
-| 3V3          | shield 3V3 / VCC pad  | see warning below                    |
-| GND          | shield GND            | common ground                        |
-
-**Power the shield from 3V3, not 5V.** The RP2040 is *not* 5V-tolerant. The
-shield's MIDI-IN opto output idles at the shield's VCC; at 5V that line would
-over-volt GP1 when you connect the sync-in. Running the shield at 3V3 keeps the
-RX line safe and still drives MIDI OUT fine.
-
-The shield's RX enable switch (often "S2") only connects/disconnects MIDI IN
-from the RX pin — it has no effect on MIDI OUT or playback. Leave it in the
-connected position only when you wire up sync-in. If you get silence on OUT,
-the most likely cause is GP0 landing on the RX pad instead of the TX pad.
+Cross-core pattern state uses single aligned 8/16-bit scalars (atomic on the
+RP2350) and volatile request flags, exactly as before.
 
 ---
 
-## Arduino IDE setup
+## Bill of materials
+
+| Part                                   | Role                                            |
+|----------------------------------------|-------------------------------------------------|
+| Raspberry Pi Pico 2 (RP2350)           | MCU (dual core, 520 KB RAM)                      |
+| PCM5100A I2S DAC board (3.5 mm TRS)     | stereo audio output                             |
+| SPI NOR flash module ("128 MB")        | holds the SF2 bank image                        |
+| SH1106 1.3" 128×64 I2C OLED            | display                                         |
+| EC11 rotary encoder w/ push switch     | navigate / edit / SHIFT                          |
+| 4×4 matrix keypad                      | step entry + note play + transport              |
+| 3 LEDs                                 | show the active keypad page                      |
+
+The CD74HC4067 16-channel mux from your parts pile is **not required** by this
+firmware (the keypad is read as an 8-pin matrix). It's left for future GPIO
+expansion.
+
+---
+
+## Wiring (RP2350 `GPxx`)
+
+All buttons/encoder are active-low with internal pull-ups — wire their common
+side to **GND**. Pins are defined in `Config.h`; change them there if needed.
+
+| Signal                | Pico 2 pin | Notes                                       |
+|-----------------------|------------|---------------------------------------------|
+| OLED SDA / SCL        | GP4 / GP5  | I2C0, 400 kHz                               |
+| Encoder A / B / SW    | GP6 / GP7 / GP8 | quadrature + push (tap=click, hold=SHIFT) |
+| I2S DIN (SD)          | GP9        | → PCM5100A SD                               |
+| I2S BCLK / LRCLK      | GP10 / GP11 | → PCM5100A BCK / WS (LRCLK must be BCLK+1) |
+| PCM5100A SCK/MCLK     | —          | leave unconnected (self-clocked)            |
+| SF2 flash MISO/CS/SCK/MOSI | GP12 / GP13 / GP14 / GP15 | SPI1                         |
+| Keypad rows           | GP16–GP19  | driven low one at a time                    |
+| Keypad cols           | GP20, GP21, GP22, GP26 | read with pull-ups (active-low) |
+| Page LEDs 0/1/2       | GP0 / GP1 / GP2 | STEP / NOTE / CTRL (active-high)        |
+
+PCM5100A and the OLED have their own power needs; share a common ground with the
+Pico. The SF2 flash module is a 3.3 V SPI part — power it from 3V3.
+
+---
+
+## Software setup (Arduino IDE)
 
 1. Install the **arduino-pico** core (Earle Philhower). Boards Manager URL:
    `https://github.com/earlephilhower/arduino-pico/releases/download/global/package_rp2040_index.json`
-2. Install the **U8g2** library (Library Manager).
-3. Select your Pico board.
-4. **Flash Size:** choose a layout that includes a filesystem, e.g.
-   *"2MB (Sketch 1MB / FS 1MB)"*. Song save/load needs the FS partition.
+2. Install the **U8g2** library (Library Manager). The **I2S** library ships
+   with arduino-pico.
+3. Add **TinySoundFont**: download `tsf.h` from
+   <https://github.com/schellingb/TinySoundFont> and drop it in this sketch
+   folder (next to `tsf_impl.cpp`). It builds like any header — no extra steps.
+4. Select **Raspberry Pi Pico 2** and a Flash Size layout **with a filesystem**
+   partition (Sketch + FS) so song save/load works.
 5. Open `GM_Sequencer.ino` (keep all files in the same folder) and upload.
+
+If `tsf.h` is missing the project still builds and runs, but the synth outputs
+silence (you'll see a compile warning).
 
 ---
 
-## UI manual
+## Flash & RAM reality (important)
 
-The control model is identical on every page, so it becomes muscle memory:
+Mainline TinySoundFont loads an SF2 and **expands every sample to a 32-bit float
+in RAM**. The RP2350 has ~520 KB, so a bank must be **slimmed to fit**:
 
-| Input              | Action                                                       |
-|--------------------|--------------------------------------------------------------|
-| Rotate encoder     | move cursor / selection                                      |
-| SHIFT + rotate     | change the value at the cursor                               |
-| Click encoder      | primary action (SEQ: toggle step · SONG: run the action row) |
-| SHIFT + click      | secondary (SEQ: cycle the per-step field)                    |
-| Long-press encoder | audition / preview the selected note                         |
-| PLAY               | start / stop (SHIFT = start from top)                         |
-| PAGE               | next page (SHIFT = previous)                                  |
-| TRACK              | next track (SHIFT = previous · long-hold = clear track)      |
-| MUTE               | mute track (SHIFT = solo track)                              |
+- The supplied `OPL2_FM_v2_FAT_Adlib.sf2` and `Merlin_GM_V1.2_Bank.sf2` are
+  **~28 MB each** — they will *not* load as-is.
+- In **Polyphone** (free SF2 editor): remove unused presets, downsample/trim
+  samples, and export a slim bank. Budget roughly **≤ ~200–250 KB of sample
+  data** (it ~doubles as float) so it fits alongside the rest of the firmware.
+- Keep it General-MIDI-shaped (preset 0 = melodic default, bank 128 = drums) so
+  the INST page program names line up.
 
-The status bar shows page, track, MIDI channel, mute/solo flag, transport
-(filled square = running) and BPM.
+The external flash module then just *stores* the slim bank for the SF2 reader;
+its large capacity isn't the bottleneck — RAM is. (An advanced
+memory-mapped/streaming-tsf path is stubbed in `Sf2Flash.cpp` /
+`Config.h SF2_USE_MMAP` for a future large-bank build, but mainline tsf still
+copies samples to float, so it doesn't remove the RAM cost on its own.)
+
+### Flashing the SF2 bank
+
+1. Slim your `.sf2` files as above.
+2. Pack them into a flash image (order = bank index; keep OPL2 at index 0):
+   ```
+   python3 tools/pack_sf2.py -o sf2_image.bin \
+       OPL2:OPL2_slim.sf2  Merlin:Merlin_slim.sf2
+   ```
+3. Write `sf2_image.bin` to **address 0** of the external SPI flash with your
+   programmer. On first boot `Sf2Flash` reads the directory and `SoundFont`
+   loads `SF2_DEFAULT_BANK` (0 = OPL2). Change the default in `Config.h`.
+
+---
+
+## Control surface
+
+The encoder is the primary editor; the keypad adds fast step entry and replaces
+the old hardware buttons. **Hold the encoder switch = SHIFT.**
+
+| Input                | Action                                                       |
+|----------------------|--------------------------------------------------------------|
+| Rotate encoder       | move cursor / selection                                      |
+| SHIFT (hold) + rotate| change the value at the cursor                               |
+| Tap encoder          | primary action (SEQ: toggle step · SONG: run the action row) |
+| SHIFT + keypad A/B/C | select keypad page **STEP / NOTE / CTRL** (LEDs follow)      |
+
+### Keypad pages (shown one-hot on the 3 LEDs)
+
+- **STEP** (LED0): keys 1–16 toggle steps 1–16 of the current track and park the
+  cursor there for encoder fine-editing.
+- **NOTE** (LED1): keys play the synth live (auditioned on the track's channel;
+  drums from note 36, melodic from C3).
+- **CTRL** (LED2): keys act as the old hardware buttons —
+  `1`=Play/Stop · `2`=Page · `3`=Track · `4`=Mute · `5`=cycle SEQ step field.
+  Combine with SHIFT for the secondary action (e.g. SHIFT+`2`=previous page,
+  SHIFT+`3`=previous track, SHIFT+`4`=solo).
 
 ### Pages
 
 - **SEQ** — the step grid (hollow = empty, solid = active, halo = cursor; the
-  playhead inverts the current step while running). The bottom line shows the
-  cursor step number, its note name (or drum name on channel 10), and the
-  selected per-step field/value. SHIFT+rotate edits the selected field; SHIFT+
-  click cycles through **NOTE · VEL · GATE · PROB · MICRO**. Each track has its
-  own length (1–64) for polymetric patterns.
-- **INST** — Channel (1–16; ch 10 = GM drums), Program (GM instrument name, or
-  drum-kit name on ch 10), Bank (GM / MT-32), Octave (−3…+3), Length.
-- **MIX** — Volume (CC7), Pan (CC10, shown L/C/R), Reverb send (CC91), Chorus
-  send (CC93).
-- **FX** — global Reverb type (0–7), Chorus type (0–7), Master Volume (GM SysEx).
-- **SONG** — BPM (20–300), Swing (0–75%), Resolution (steps/beat: 1,2,3,4,6,8),
-  Clock source (INT / EXT-reserved), Slot (1–8, `*` = used), then the action
-  rows **Save**, **Load**, **GM Reset** (navigate to one and click).
+  playhead inverts the current step). The bottom line shows the cursor step, its
+  note/drum name, and the selected per-step field. SHIFT+rotate edits the field;
+  CTRL-page key `5` cycles **NOTE · VEL · GATE · PROB · MICRO**. Per-track length
+  (1–64) gives polymeter.
+- **INST** — Channel (ch 10 = drums), Program (GM name from the bank), Bank,
+  Octave (−3…+3), Length.
+- **MIX** — Volume (CC7), Pan (CC10), Reverb send (CC91), Chorus send (CC93).
+- **FX** — global Reverb/Chorus type and Master Volume. *Note:* TinySoundFont
+  has no built-in reverb/chorus, so these are stored in the song but not yet
+  audible; Master Volume scales the SF2 output gain.
+- **SONG** — BPM (20–300), Swing (0–75%), Resolution, Clock source (reserved),
+  Slot (1–8), then **Save / Load / GM Reset**.
 
 ---
 
 ## Feature summary
 
-- 16 tracks (the GM channel ceiling; track 10 → channel 10 = drums).
-- Up to 64 steps per track, independent per-track length (polymeter).
+- 16 tracks (track 10 → channel 10 = drums), up to 64 steps, per-track length.
 - Per step: on/off, note, velocity, gate %, probability %, ±12-tick micro-timing,
   tie.
 - Swing, selectable grid resolution, 20–300 BPM, drift-free 96-PPQN timing.
-- Full SAM2695 control: program/bank, volume, pan, reverb/chorus sends, global
-  reverb/chorus type, master volume, GM reset.
-- 8 song slots in flash (LittleFS).
-- MIDI clock + transport output already emitted, ready for syncing external
-  gear; GP1/GP14 reserved for future clock-in and analog click-out.
+- Internal SF2 synthesis → PCM5100A I2S stereo out, up to `SYNTH_MAX_VOICES`
+  polyphony.
+- Selectable SF2 banks from the external flash module.
+- 8 song slots in on-board LittleFS.
 
 ---
 
+## File map
+
+| File                        | Role                                                      |
+|-----------------------------|-----------------------------------------------------------|
+| `GM_Sequencer.ino`          | dual-core setup/loop                                      |
+| `Sequencer.*`               | pattern model + transport engine (unchanged)             |
+| `GMSynth.*`                 | voice API — now forwards to the SoundFont engine          |
+| `SoundFont.*`               | tsf wrapper, lock-free MIDI ring, block render            |
+| `tsf_impl.cpp`              | compiles TinySoundFont once (add `tsf.h`)                 |
+| `AudioOut.*`                | PCM5100A I2S output (PIO + DMA) driving the renderer       |
+| `Sf2Flash.*`                | external SPI flash: read SF2 bank(s)                       |
+| `Storage.*`                 | song save/load (LittleFS)                                 |
+| `Controls.*`                | encoder (tap/hold) + 4×4 keypad + page LEDs               |
+| `UI.*`                      | SH1106 rendering + input routing                          |
+| `Config.h`                  | pins, audio/synth params, limits, enums                   |
+| `Platform.*`                | portability shims (engine stays board-agnostic)           |
+| `tools/pack_sf2.py`         | build the SF2 flash image                                 |
+
+---
+
+## Bring-up notes
+
+- `AudioOut.cpp` targets the arduino-pico **I2S** library; if you hear nothing,
+  confirm BCLK/LRCLK are adjacent GPIOs and the DAC's MCLK is left unconnected.
+- The SF2 reader uses 3-byte addressing for parts ≤16 MB and 4-byte for larger;
+  verify your flash's read opcodes (`0x0B` / `0x0C`) if a bank won't load.
+- If audio stutters, lower `SYNTH_MAX_VOICES` or raise `AUDIO_BLOCK_FRAMES` in
+  `Config.h`; watch `AudioOut::underruns()`.
+
 ## Versioning
 
-Each release lives on its own git branch (e.g. `v1.0.0`) so you can always roll
-back. Create the next version on a fresh branch before editing.
+Each release lives on its own git branch so you can always roll back.

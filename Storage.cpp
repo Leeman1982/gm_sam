@@ -1,8 +1,9 @@
 // ============================================================================
-//  Storage.cpp  -  LittleFS persistence
+//  Storage.cpp  -  LittleFS persistence (Pico 2 on-board flash)
 //
-//  NOTE: In Arduino IDE select a Flash Size with a filesystem partition, e.g.
-//  Tools -> Flash Size -> "2MB (Sketch: 1MB, FS: 1MB)" for a Raspberry Pi Pico.
+//  Songs are tiny, so they stay in the RP2350's on-board QSPI flash via
+//  LittleFS - independent of the external SF2 bank flash. In Arduino IDE pick a
+//  Flash Size layout that includes a filesystem partition (e.g. "Sketch + FS").
 // ============================================================================
 #include "Storage.h"
 #include <LittleFS.h>

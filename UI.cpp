@@ -230,13 +230,40 @@ void handleInput() {
       toast(seq.data.tracks[currentTrack].mute ? "MUTED" : "UNMUTED");
     }
   }
-  // Encoder long-press = audition
+  // Encoder long-press = audition (retained API; hold is now SHIFT so this is
+  // a no-op - live auditioning moved to the NOTE keypad page below).
   if (Controls::encLongPress()) auditionCurrent();
   // Encoder rotate
   int d = Controls::encDelta();
   if (d != 0) handleRotate(d, Controls::shiftHeld());
   // Encoder click
   if (Controls::encClick()) handleClick(Controls::shiftHeld());
+
+  // ---- keypad surface (page-routed by Controls) ----
+  // STEP page: a key toggles that step of the current track and parks the
+  // cursor there, so the encoder can fine-edit the step you just entered.
+  int ks = Controls::keypadStep();
+  if (ks >= 0) {
+    Track& tr = seq.data.tracks[currentTrack];
+    if (ks < tr.length) {
+      seq.toggleStep(currentTrack, (uint8_t)ks);
+      seqCursor = (uint8_t)ks;
+    }
+  }
+  // NOTE page: keys play the synth live (auditioned on the current channel).
+  int kn = Controls::keypadNote();
+  if (kn >= 0) {
+    Track& tr = seq.data.tracks[currentTrack];
+    uint8_t base = (tr.channel == DRUM_CHANNEL) ? 36 : 48;   // drums / C3
+    seq.audition(currentTrack, (uint8_t)clampi(base + kn, 0, 127));
+  }
+  // CTRL page: cycle the per-step field (the old SHIFT+click, which the
+  // single-switch SHIFT can no longer express).
+  if (Controls::fieldCyclePressed()) {
+    Track& tr = seq.data.tracks[currentTrack];
+    tr.stepField = (tr.stepField + 1) % SF_COUNT;
+    toast(kFieldName[tr.stepField]);
+  }
 }
 
 // ---------------------------------------------------------------------------
