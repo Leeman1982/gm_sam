@@ -1,15 +1,33 @@
-# GM Sequencer — RP2040 + Dream SAM2695
+# GM Sequencer — RP2040 + on-chip SoundFont synth
 
-A professional dual-core MIDI step sequencer for the Raspberry Pi Pico (RP2040)
-that drives a Dream **SAM2695** General-MIDI module (the AliExpress "GM 2.0
-synthesis module"). 16 tracks, 64 steps, per-step micro-timing/probability,
-rock-solid drift-free timing, and a clear SH1106 OLED UI.
+A professional dual-core step sequencer for the Raspberry Pi Pico (RP2040) with
+a **built-in SoundFont (SF2) synthesizer** — no external sound module required.
+16 tracks, 64 steps, per-step micro-timing/probability, rock-solid drift-free
+timing, and a clear SH1106 OLED UI.
 
-The SAM2695 is a 64-voice GM/GS/MT-32 synth-on-a-chip with onboard reverb +
-chorus and a 4-band EQ, controlled over standard serial MIDI at 31250 baud.
-This firmware exposes that feature set: per-track instrument/bank, volume, pan,
-reverb & chorus sends, global reverb/chorus types and master volume, plus a GM
-reset.
+Earlier versions drove an external Dream SAM2695/VS1053 GM chip over serial
+MIDI. This version **renders the audio itself**: a General-MIDI SoundFont is
+baked into flash and played back by a software sample engine on core1, straight
+out an I2S DAC (or PWM). The sequencer, UI and control pinout are unchanged — the
+same per-track instrument/bank, volume, pan, octave and master-volume controls
+now address the on-chip synth.
+
+**Default SoundFont:** *SYNTHGMS* — a complete 1 MB General-MIDI set (128
+melodic programs + a drum kit, banks 0 and 128). It is baked into flash and read
+directly from memory-mapped XIP, so the sample data costs no RAM, and it fits
+both the 4 MB and 16 MB boards. Two more fonts ship ready to select in
+`Config.h` (see *SoundFonts* below):
+
+- **Vintage Dreams Waves v2.0** (0.3 MB) — characterful synth/vintage GM set.
+- **Power GM 1.5** (8 MB) — high-quality GM; needs a 16 MB board and is loaded
+  from a flash partition rather than baked (see the `picotool` steps below).
+
+### Target hardware
+
+Built for an **RP2040** board (e.g. the Raspberry Pi Pico, or a TENSTAR RP2040
+Pro Micro in its 4 MB / 16 MB flash variants). The code is kept portable to the
+**RP2350 / Pico 2**, which adds a hardware FPU — there you can raise
+`AUDIO_RATE` to 44100 and `SYNTH_MAX_VOICES` for more polyphony and headroom.
 
 ---
 
@@ -17,30 +35,34 @@ reset.
 
 Two cores, no locks in the audio path:
 
-- **core1 — engine.** Owns all timing and is the *only* core that touches the
-  MIDI UART. Internal resolution is **96 PPQN** with a drift-free integer tick
-  accumulator (no floats in the hot loop). Emits MIDI clock (0xF8) on the
-  24-PPQN grid plus Start/Stop/Continue — the foundation for future external
-  sync. An event scheduler handles note on/off with swing and per-step micro
-  offsets (offs fire before ons at the same tick).
+- **core1 — engine + synth.** Owns all timing *and* the audio. Sequencer
+  resolution is **96 PPQN** with a drift-free integer tick accumulator (no
+  floats in the hot loop). Each pass it turns scheduled steps into note on/off
+  calls on the software synth (`Synth`), then tops up the audio output buffer
+  (`Audio`). The synth allocates sample voices from the baked SoundFont (`SF2`)
+  and mixes them with fixed-point pitch (32.32 phase) and a linear DAHDSR
+  envelope.
 - **core0 — UI.** SH1106 rendering (~30 fps), encoder + buttons, and LittleFS
   song storage.
 
 Cross-core sharing uses single aligned 8/16-bit scalars (atomic on the M0+) and
-volatile request flags. Setting changes are reconciled to MIDI each engine pass,
-so edits are audible immediately.
+volatile request flags. Setting changes are reconciled into the synth each
+engine pass, so edits are audible immediately. All synth/audio calls happen on
+core1 only, so no locking is needed in the render path.
 
 ---
 
 ## Wiring
 
 All buttons and the encoder are **active-low** with internal pull-ups — wire the
-common side to **GND**.
+common side to **GND**. The control pinout is identical to previous versions;
+only the three freed "MIDI" pins now carry audio.
 
 | Signal            | Pico pin | Notes                                        |
 |-------------------|----------|----------------------------------------------|
-| MIDI TX → module  | GP0      | UART0 TX to the SAM2695 MIDI-IN / RX pad     |
-| MIDI RX (future)  | GP1      | reserved for external clock-sync input       |
+| I2S BCLK          | GP0      | bit clock → DAC                               |
+| I2S LRCLK         | GP1      | word-select (forced to BCLK+1 by the core)    |
+| I2S DATA (DIN)    | GP2      | audio data → DAC                              |
 | OLED SDA          | GP4      | I2C0                                          |
 | OLED SCL          | GP5      | I2C0, 400 kHz                                 |
 | Encoder A         | GP6      | quadrature (interrupt-driven)                 |
@@ -53,33 +75,30 @@ common side to **GND**.
 | MUTE button       | GP13     | mute (SHIFT = solo)                           |
 | CLICK OUT (future)| GP14     | reserved analog gate-sync pulse               |
 
-Power the SAM2695 and OLED per their own requirements; share a common ground
-with the Pico. Add a series resistor on the MIDI line per the module's docs if
-it expects an opto-isolated/standard MIDI input.
+Share a common ground between the Pico, the DAC and the OLED.
 
-### Using an Arduino-style MIDI shield (DIN-5 IN/OUT/THRU)
+### Audio output options
 
-A generic opto-isolated MIDI shield gives you proper DIN-5 sockets; drive the
-SAM2695 from its MIDI OUT. Wire it by **function**, not by the silkscreen pin
-number — these shields use the Arduino convention where pad 0 = RX and pad 1 =
-TX, and MIDI OUT is driven by the TX (D1) pad:
+Pick the backend in `Config.h` (`AUDIO_BACKEND_I2S` *or* `AUDIO_BACKEND_PWM`).
 
-| Pico pin     | Shield pad            | Why                                  |
-|--------------|-----------------------|--------------------------------------|
-| GP0 (TX)     | "1 / TX" pad          | drives MIDI OUT (→ SAM2695 MIDI IN)  |
-| GP1 (RX)     | "0 / RX" pad          | opto output (future clock sync-in)   |
-| 3V3          | shield 3V3 / VCC pad  | see warning below                    |
-| GND          | shield GND            | common ground                        |
+**I2S DAC (default, recommended).** Wire a small PCM5102 or UDA1334 board:
 
-**Power the shield from 3V3, not 5V.** The RP2040 is *not* 5V-tolerant. The
-shield's MIDI-IN opto output idles at the shield's VCC; at 5V that line would
-over-volt GP1 when you connect the sync-in. Running the shield at 3V3 keeps the
-RX line safe and still drives MIDI OUT fine.
+| Pico pin | DAC pin            |
+|----------|--------------------|
+| GP0      | BCK / BCLK         |
+| GP1      | LCK / LRCK / WS    |
+| GP2      | DIN / DATA         |
+| 3V3      | VIN (3.3 V)        |
+| GND      | GND                |
 
-The shield's RX enable switch (often "S2") only connects/disconnects MIDI IN
-from the RX pin — it has no effect on MIDI OUT or playback. Leave it in the
-connected position only when you wire up sync-in. If you get silence on OUT,
-the most likely cause is GP0 landing on the RX pad instead of the TX pad.
+On a PCM5102 also tie SCK→GND (uses internal PLL) and FLT/DEMP/XSMT per the
+board's defaults (XSMT high to un-mute). Output is line level — feed an amp or
+powered speakers.
+
+**PWM (no DAC).** Set `AUDIO_BACKEND_PWM 1` / `AUDIO_BACKEND_I2S 0`. Audio comes
+straight off **GP0 (left)** and **GP1 (right)**; pass each through a simple RC
+low-pass (e.g. 1 kΩ + 10 nF) and AC-couple into an amp. Noisier and lower
+resolution than I2S, but needs no extra chip.
 
 ---
 
@@ -87,11 +106,76 @@ the most likely cause is GP0 landing on the RX pad instead of the TX pad.
 
 1. Install the **arduino-pico** core (Earle Philhower). Boards Manager URL:
    `https://github.com/earlephilhower/arduino-pico/releases/download/global/package_rp2040_index.json`
+   (Bundles the **I2S** and **PWMAudio** libraries used here — no separate install.)
 2. Install the **U8g2** library (Library Manager).
 3. Select your Pico board.
 4. **Flash Size:** choose a layout that includes a filesystem, e.g.
-   *"2MB (Sketch 1MB / FS 1MB)"*. Song save/load needs the FS partition.
+   *"2MB (Sketch 1MB / FS 1MB)"*. The sketch + baked SoundFont need ~1.4 MB of
+   program flash, and song save/load needs the FS partition.
 5. Open `GM_Sequencer.ino` (keep all files in the same folder) and upload.
+
+---
+
+## SoundFonts
+
+Enable **any subset** of fonts in `Config.h` — every enabled one stays resident
+in flash and you switch between them **live** on the SONG page (the *Font* row,
+SHIFT+rotate). The first enabled font is active at boot. Switching cuts sounding
+voices for an instant, then the next note uses the new font; each channel keeps
+its program number, so e.g. program 0 plays the new font's program 0.
+
+| Define              | Font              | Size  | How it's stored        | Board   |
+|---------------------|-------------------|-------|------------------------|---------|
+| `FONT_SYNTHGMS`     | SYNTHGMS (GM)     | 1 MB  | baked C array          | 4/16 MB |
+| `FONT_VINTAGEDREAMS`| Vintage Dreams    | 0.3 MB| baked C array          | 4/16 MB |
+| `FONT_POWERGM`      | Power GM 1.5 (GM) | 8 MB  | flash partition        | 16 MB   |
+
+The defaults enable all three (a 16 MB board fits SYNTHGMS + Vintage Dreams baked
+in the low ~1.3 MB, Power GM at the 2 MB flash offset, and the song FS above it).
+`FONT_POWERGM` is skipped automatically until you actually write the font to
+flash, so it simply won't appear in the selector before then.
+
+Each font has a **makeup gain** (`gainQ12` in the `Synth.cpp` registry, 4096 =
+unity) so loudness stays consistent when you switch — fonts are mastered at very
+different levels. The shipped values were measured from a representative GM
+phrase; adjust them to taste if a font sounds hot or quiet.
+
+Use **16-bit PCM** SoundFonts (the reader streams `int16` straight from flash).
+Compressed SF2/SF3 (Ogg-Vorbis samples) are **not** supported.
+
+### Baking a small font (≤ ~1.5 MB)
+
+`tools/sf2_to_cpp.py` turns a `.sf2` into a flash-resident C array:
+
+```
+python3 tools/sf2_to_cpp.py soundfonts/YourFont.sf2 --name YourFont --out .
+```
+
+That writes `Soundfont_YourFont.cpp/.h` (the array is auto-guarded behind a
+`FONT_YOURFONT` define). To make it selectable, add `#define FONT_YOURFONT 1` in
+`Config.h`, then in `Synth.cpp` include its header and add one registry line in
+`begin()` (mirror the existing `fonts_[fontCount_++] = { ... }` entries).
+
+### Loading a large font: Power GM 1.5 (8 MB, 16 MB board only)
+
+An 8 MB font is too big to compile as a C array, so it is written once to a
+fixed flash region and read in place from XIP:
+
+1. In `Config.h` set `FONT_POWERGM 1` (and the others to `0`).
+2. Build/upload the sketch as usual (it occupies the low ~0.4 MB of flash).
+3. Write the font once with [`picotool`](https://github.com/raspberrypi/picotool)
+   at the offset `FONT_FLASH_OFFSET` (default `0x200000` = 2 MB):
+
+   ```
+   picotool load soundfonts/PowerGM_1.5.sf2 -o 0x10200000
+   picotool reboot
+   ```
+
+   `0x10000000` is the RP2040 XIP base; `0x10200000` = base + 2 MB. The font
+   (8 MB) then lives at 2–10 MB, clear of the sketch below and the LittleFS song
+   partition above. The font survives ordinary sketch re-uploads (they only
+   rewrite the low flash). Adjust `FONT_FLASH_OFFSET` if your sketch ever grows
+   past 2 MB.
 
 ---
 
@@ -122,14 +206,17 @@ The status bar shows page, track, MIDI channel, mute/solo flag, transport
   selected per-step field/value. SHIFT+rotate edits the selected field; SHIFT+
   click cycles through **NOTE · VEL · GATE · PROB · MICRO**. Each track has its
   own length (1–64) for polymetric patterns.
-- **INST** — Channel (1–16; ch 10 = GM drums), Program (GM instrument name, or
-  drum-kit name on ch 10), Bank (GM / MT-32), Octave (−3…+3), Length.
-- **MIX** — Volume (CC7), Pan (CC10, shown L/C/R), Reverb send (CC91), Chorus
-  send (CC93).
-- **FX** — global Reverb type (0–7), Chorus type (0–7), Master Volume (GM SysEx).
+- **INST** — Channel (1–16; ch 10 = GM drums), Program (shows the real SoundFont
+  patch name, or drum-kit name on ch 10), Bank, Octave (−3…+3), Length.
+- **MIX** — Volume (CC7), Pan (CC10, shown L/C/R), Reverb send, Chorus send.
+  *(Reverb/chorus sends are stored per track but have no audible effect yet —
+  there is no on-chip FX engine; they are reserved for a future version.)*
+- **FX** — global Reverb type (0–7), Chorus type (0–7), Master Volume.
+  *(Reverb/chorus type reserved as above; Master Volume scales the synth output.)*
 - **SONG** — BPM (20–300), Swing (0–75%), Resolution (steps/beat: 1,2,3,4,6,8),
-  Clock source (INT / EXT-reserved), Slot (1–8, `*` = used), then the action
-  rows **Save**, **Load**, **GM Reset** (navigate to one and click).
+  Clock source (INT / EXT-reserved), Slot (1–8, `*` = used), **Font** (SHIFT+
+  rotate to switch the active SoundFont live — see below), then the action rows
+  **Save**, **Load**, **GM Reset** (navigate to one and click).
 
 ---
 
@@ -140,11 +227,11 @@ The status bar shows page, track, MIDI channel, mute/solo flag, transport
 - Per step: on/off, note, velocity, gate %, probability %, ±12-tick micro-timing,
   tie.
 - Swing, selectable grid resolution, 20–300 BPM, drift-free 96-PPQN timing.
-- Full SAM2695 control: program/bank, volume, pan, reverb/chorus sends, global
-  reverb/chorus type, master volume, GM reset.
+- On-chip SoundFont synth: up to 16 sample voices, per-track program/bank,
+  volume, pan, octave and master volume; SF2 played directly from flash.
+- Audio out via I2S DAC (default) or PWM — selectable in `Config.h`.
 - 8 song slots in flash (LittleFS).
-- MIDI clock + transport output already emitted, ready for syncing external
-  gear; GP1/GP14 reserved for future clock-in and analog click-out.
+- GP14 reserved for a future analog click-out.
 
 ---
 

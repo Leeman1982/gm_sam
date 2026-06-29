@@ -16,6 +16,8 @@
 #include "Config.h"
 #include "Sequencer.h"
 #include "GMSynth.h"
+#include "Synth.h"
+#include "Audio.h"
 #include "Controls.h"
 #include "Storage.h"
 #include "UI.h"
@@ -51,14 +53,16 @@ void loop() {
 }
 
 // ----------------------------------------------------------------------------
-//  CORE 1  -  real-time engine (owns Serial1 / MIDI)
+//  CORE 1  -  real-time engine (owns the synth + audio output)
 // ----------------------------------------------------------------------------
 void setup1() {
-  GMSynth::begin();                 // Serial1 @ 31250 + GM reset
+  GMSynth::begin();                 // load the baked SoundFont + reset channels
+  Audio::begin();                   // bring up I2S/PWM audio output
   while (!g_songReady) delay(1);    // wait for core0 to initialise the song
   seq.engineBegin();                // arms timing + queues a full resend
 }
 
 void loop1() {
-  seq.engineService();              // tight real-time loop (never blocks long)
+  seq.engineService();              // sequencer timing -> note on/off into Synth
+  Audio::service();                 // top up the audio buffer (renders a block)
 }

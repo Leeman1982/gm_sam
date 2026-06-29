@@ -296,6 +296,8 @@ void Sequencer::engineService() {
   // ---- one-shot requests ----
   if (reqPanic)   { reqPanic = 0; flushAllOffs(); }
   if (reqGmReset) { reqGmReset = 0; GMSynth::gmReset(); delay(5); reqResendAll = 1; }
+  if (reqFont)    { uint8_t f = reqFont - 1; reqFont = 0;
+                    flushAllOffs(); GMSynth::setFont(f); reqResendAll = 1; }
 
   // ---- push setting changes to the synth ----
   reconcile();
