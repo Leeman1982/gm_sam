@@ -100,9 +100,12 @@ silence (you'll see a compile warning).
 Mainline TinySoundFont loads an SF2 and **expands every sample to a 32-bit float
 in RAM**. The RP2350 has ~520 KB, so a bank's float-expanded samples must fit:
 
-- The **default bank, `soundfonts/Vintage_Dreams_Waves_130_sounds.sf2`** (~314 KB,
-  130 GM-style sounds), is compact and **fits as-is** — no slimming needed. It's
-  committed in `soundfonts/` so the packing step below runs out of the box.
+- The **default bank, `soundfonts/MTK_Synth.sf2`** (~283 KB) is a **complete
+  General MIDI set** — all 128 melodic presets in GM order **plus a bank-128
+  drum kit** — and is compact enough to **fit as-is**, no slimming needed.
+- A second small bank, `soundfonts/Vintage_Dreams_Waves_130_sounds.sf2` (~314 KB,
+  synth/pad voices, no GM drums), is committed too — packed as bank 1 for A/B.
+  Both run out of the box.
 - A **large** bank like `Merlin_GM_V1.2_Bank.sf2` (~28 MB) will *not* load as-is.
   Slim it in **Polyphone** (free SF2 editor): remove unused presets,
   downsample/trim samples, export. Budget roughly **≤ ~200–250 KB of sample
@@ -119,18 +122,19 @@ remove the RAM cost on its own.)
 ### Flashing the SF2 bank
 
 1. Pack one or more banks into a flash image (order = bank index; keep
-   Vintage Dreams at index 0 to match the firmware default):
+   MTK Synth at index 0 to match the firmware default):
    ```
    python3 tools/pack_sf2.py -o sf2_image.bin \
+       MTK:soundfonts/MTK_Synth.sf2 \
        VintageDreams:soundfonts/Vintage_Dreams_Waves_130_sounds.sf2
    ```
-   Add ` Merlin:Merlin_slim.sf2` as a second entry once you've slimmed it.
-   Pack two or more banks to **A/B them live** with SHIFT + keypad **D**
-   (the swap briefly mutes audio while the new bank loads, then resends every
-   track's program/volume/pan automatically).
+   With two+ banks you can **A/B them live** with SHIFT + keypad **D** (the swap
+   briefly mutes audio while the new bank loads, then resends every track's
+   program/volume/pan automatically). Add a slimmed `Merlin` as a third entry
+   if you want a different GM voicing.
 2. Write `sf2_image.bin` to **address 0** of the external SPI flash with your
    programmer. On first boot `Sf2Flash` reads the directory and `SoundFont`
-   loads `SF2_DEFAULT_BANK` (0 = Vintage Dreams). Change the default in
+   loads `SF2_DEFAULT_BANK` (0 = MTK Synth). Change the default in
    `Config.h`.
 
 ---
@@ -139,18 +143,18 @@ remove the RAM cost on its own.)
 
 Most "GM doesn't sound correct" problems are the **soundfont**, not the synth:
 
-- **Vintage Dreams Waves is a synth/waveform bank, not faithful GM timbres.**
-  It follows a GM-ish layout, but its "Acoustic Grand Piano" is a synth patch,
-  not a real piano, and it has **no proper GM percussion bank**, so the drum
-  track (channel 10) will be silent or odd. It sounds great for pads/synth work;
-  it is *not* the bank to pick if you want recognisable GM instruments.
-- **For recognisable General MIDI, use a real GM bank** (e.g. a slimmed
-  `Merlin_GM`, or GeneralUser GS) that includes all 128 melodic presets **and**
-  a percussion set at bank 128. The catch is RAM: tsf float-expands samples, so
-  a full high-quality GM set won't fit 520 KB. Slim it in Polyphone (drop unused
-  presets, downsample, mono-ize) until it loads. There is a real fidelity vs RAM
-  trade-off here on this MCU — a small GM bank means GM mapping is correct but
-  samples are lower quality.
+- **The default bank, MTK Synth, is a complete GM set** — all 128 melodic
+  presets in GM order **and** a bank-128 drum kit — so GM instruments and the
+  drum track should be correct out of the box. Its samples are compact (so it
+  fits RAM); expect modest/synthetic fidelity rather than a studio GM set.
+- **Vintage Dreams Waves (bank 1) is a synth/pad bank, NOT faithful GM.** Its
+  "Acoustic Grand Piano" is a synth patch and it has **no GM drum bank**, so the
+  drum track is silent on it. Great for pads; wrong for recognisable GM. If you
+  switched to it with SHIFT+D and GM "broke", switch back to bank 0.
+- **Want higher-fidelity GM?** Slim a larger bank (your `Merlin_GM`, or
+  GeneralUser GS) in Polyphone — drop unused presets, downsample, mono-ize —
+  until its float-expanded samples fit ~520 KB, then pack it. There is a real
+  fidelity-vs-RAM trade-off on this MCU.
 - **Channel 10 is drums.** The drum track only sounds if the bank has bank-128
   percussion. The firmware sets the drum flag automatically; the bank must have
   the content.
