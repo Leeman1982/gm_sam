@@ -50,21 +50,69 @@ void programChange(uint8_t ch, uint8_t program) {
 
 void pitchBend(uint8_t ch, int16_t bend14) {
   int v = bend14 + 8192;                 // 0..16383, centre 8192
-  if (v < 0) v = 0; if (v > 16383) v = 16383;
+  if (v < 0) v = 0;
+  if (v > 16383) v = 16383;
   Serial1.write(st(0xE0, ch));
   Serial1.write((uint8_t)(v & 0x7F));    // LSB
   Serial1.write((uint8_t)((v >> 7) & 0x7F)); // MSB
 }
 
 void bankSelect(uint8_t ch, uint8_t bankMSB) { controlChange(ch, 0,  bankMSB); }
-void setVolume   (uint8_t ch, uint8_t v)     { controlChange(ch, 7,  v); }
-void setPan      (uint8_t ch, uint8_t v)     { controlChange(ch, 10, v); }
+void setVolume    (uint8_t ch, uint8_t v)    { controlChange(ch, 7,  v); }
+void setPan       (uint8_t ch, uint8_t v)    { controlChange(ch, 10, v); }
 void setExpression(uint8_t ch, uint8_t v)    { controlChange(ch, 11, v); }
 void setModulation(uint8_t ch, uint8_t v)    { controlChange(ch, 1,  v); }
+void setSustain   (uint8_t ch, uint8_t on)   { controlChange(ch, 64, on ? 127 : 0); }
+void setPortamento(uint8_t ch, uint8_t on)   { controlChange(ch, 65, on ? 127 : 0); }
+void setPortaTime (uint8_t ch, uint8_t v)    { controlChange(ch, 5,  v); }
 void setReverbSend(uint8_t ch, uint8_t v)    { controlChange(ch, 91, v); }   // CC0x5B
 void setChorusSend(uint8_t ch, uint8_t v)    { controlChange(ch, 93, v); }   // CC0x5D
 void setReverbType(uint8_t ch, uint8_t t)    { controlChange(ch, 80, t & 7); } // CC0x50
 void setChorusType(uint8_t ch, uint8_t t)    { controlChange(ch, 81, t & 7); } // CC0x51
+
+// ---- RPN / NRPN --------------------------------------------------------
+// Each write finishes by parking the parameter number at NULL (7F 7F) so a
+// stray CC6 from anywhere can never scribble on the last-selected parameter.
+void rpn(uint8_t ch, uint8_t msb, uint8_t lsb, uint8_t value) {
+  controlChange(ch, 101, msb);
+  controlChange(ch, 100, lsb);
+  controlChange(ch, 6,   value);
+  controlChange(ch, 101, 127);
+  controlChange(ch, 100, 127);
+}
+
+void nrpn(uint8_t ch, uint8_t msb, uint8_t lsb, uint8_t value) {
+  controlChange(ch, 99, msb);
+  controlChange(ch, 98, lsb);
+  controlChange(ch, 6,  value);
+  controlChange(ch, 99, 127);
+  controlChange(ch, 98, 127);
+}
+
+void setBendRange   (uint8_t ch, uint8_t s) { rpn (ch, 0x00, 0x00, s > 24 ? 24 : s); }
+void setVibratoRate (uint8_t ch, uint8_t v) { nrpn(ch, 0x01, 0x08, v); }
+void setVibratoDepth(uint8_t ch, uint8_t v) { nrpn(ch, 0x01, 0x09, v); }
+void setVibratoDelay(uint8_t ch, uint8_t v) { nrpn(ch, 0x01, 0x0A, v); }
+void setCutoff      (uint8_t ch, uint8_t v) { nrpn(ch, 0x01, 0x20, v); }
+void setResonance   (uint8_t ch, uint8_t v) { nrpn(ch, 0x01, 0x21, v); }
+void setAttack      (uint8_t ch, uint8_t v) { nrpn(ch, 0x01, 0x63, v); }
+void setDecay       (uint8_t ch, uint8_t v) { nrpn(ch, 0x01, 0x64, v); }
+void setRelease     (uint8_t ch, uint8_t v) { nrpn(ch, 0x01, 0x66, v); }
+
+// ---- GS SysEx (Roland DT1 with checksum) --------------------------------
+void gsParam(uint8_t a1, uint8_t a2, uint8_t a3, uint8_t v) {
+  v = clamp7(v);
+  uint8_t sum = (uint8_t)((a1 + a2 + a3 + v) & 0x7F);
+  uint8_t ck  = (uint8_t)((128 - sum) & 0x7F);
+  uint8_t sx[] = { 0xF0, 0x41, 0x10, 0x42, 0x12, a1, a2, a3, v, ck, 0xF7 };
+  Serial1.write(sx, sizeof(sx));
+}
+
+void setMasterReverbLevel(uint8_t v) { gsParam(0x40, 0x01, 0x33, v); }
+void setMasterReverbTime (uint8_t v) { gsParam(0x40, 0x01, 0x34, v); }
+void setMasterChorusLevel(uint8_t v) { gsParam(0x40, 0x01, 0x3A, v); }
+void setMasterChorusRate (uint8_t v) { gsParam(0x40, 0x01, 0x3B, v); }
+void setMasterChorusDepth(uint8_t v) { gsParam(0x40, 0x01, 0x3C, v); }
 
 void clockTick() { Serial1.write((uint8_t)0xF8); }
 void start()     { Serial1.write((uint8_t)0xFA); }

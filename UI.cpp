@@ -7,11 +7,13 @@
 #include "Config.h"
 #include "Sequencer.h"
 #include "Controls.h"
+#include "Keypad.h"
+#include "Pots.h"
 #include "Storage.h"
 #include "GMNames.h"
+#include "Scales.h"
 
 // ---- Display object (SH1106, hardware I2C, full frame buffer) --------------
-// Matches the tested setup: SH1106 128x64, U8g2, HW I2C on Wire (I2C0).
 static U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
 
 namespace UI {
@@ -22,13 +24,21 @@ namespace UI {
 static uint8_t currentPage  = PAGE_SEQ;
 static uint8_t currentTrack = 0;          // 0..MAX_TRACKS-1
 static uint8_t seqCursor    = 0;          // step cursor on the SEQ page
+static bool    editMode     = false;      // menu pages: encoder edits the value
 
-// One cursor per list page (INST / MIX / FX / SONG).
-static uint8_t instCursor = 0;            // 0..4
-static uint8_t mixCursor  = 0;            // 0..3
-static uint8_t fxCursor   = 0;            // 0..2
-static uint8_t songCursor = 0;            // 0..7
-static uint8_t slotSel    = 0;            // 0..NUM_SONG_SLOTS-1
+// Per-page menu row counts + cursors.
+static const uint8_t kRowCount[PAGE_COUNT] = {
+  0,  /* SEQ  */
+  0,  /* PERF */
+  10, /* TRACK */
+  8,  /* MIX  */
+  12, /* SYNTH */
+  8,  /* FX   */
+  5,  /* SCALE */
+  9,  /* SONG */
+};
+static uint8_t menuCursor[PAGE_COUNT] = {0};
+static uint8_t slotSel = 0;               // 0..NUM_SONG_SLOTS-1
 
 // Toast overlay.
 static char     toastMsg[22] = {0};
@@ -44,10 +54,10 @@ static void toast(const char* m) {
 //  Small label tables
 // ---------------------------------------------------------------------------
 static const char* const kPageShort[PAGE_COUNT] = {
-  "SEQ", "INST", "MIX", "FX", "SONG"
+  "SEQ", "PERF", "TRK", "MIX", "SYN", "FX", "SCL", "SONG"
 };
 static const char* const kFieldName[SF_COUNT] = {
-  "NOTE", "VEL", "GATE", "PROB", "MICRO"
+  "NOTE", "VEL", "GATE", "PROB", "RTCH", "MICRO", "TIE"
 };
 static const char* const kRevName[8] = {
   "Room1","Room2","Room3","Hall1","Hall2","Plate","Delay","PanDly"
@@ -55,6 +65,7 @@ static const char* const kRevName[8] = {
 static const char* const kChoName[8] = {
   "Chor1","Chor2","Chor3","Chor4","FBChor","Flangr","ShrtDl","FB Dly"
 };
+static const char* const kDirName[DIR_COUNT] = { "FWD", "REV", "PNG", "RND" };
 
 // SAM2695 / GM drum kit names by program number (sparse; falls back to "Kit n").
 static void drumKitName(uint8_t prog, char* buf, size_t n) {
@@ -83,22 +94,30 @@ static void clampCursors() {
   if (seqCursor >= len) seqCursor = len ? len - 1 : 0;
 }
 
-static void nextPage() { currentPage = (currentPage + 1) % PAGE_COUNT; }
-static void prevPage() { currentPage = (currentPage + PAGE_COUNT - 1) % PAGE_COUNT; }
-static void nextTrack(){ currentTrack = (currentTrack + 1) % MAX_TRACKS; clampCursors(); }
-static void prevTrack(){ currentTrack = (currentTrack + MAX_TRACKS - 1) % MAX_TRACKS; clampCursors(); }
+static void nextPage() { currentPage = (currentPage + 1) % PAGE_COUNT; editMode = false; }
+static void prevPage() { currentPage = (currentPage + PAGE_COUNT - 1) % PAGE_COUNT; editMode = false; }
+
+static void selectTrack(uint8_t t) {
+  currentTrack = t % MAX_TRACKS;
+  clampCursors();
+  Pots::unlatch();                          // soft pickup: no parameter jumps
+  char m[16]; snprintf(m, sizeof(m), "TRACK %d", currentTrack + 1);
+  toast(m);
+}
+static void nextTrack(){ selectTrack((uint8_t)(currentTrack + 1)); }
+static void prevTrack(){ selectTrack((uint8_t)(currentTrack + MAX_TRACKS - 1)); }
 
 // Audition the relevant note for the current context.
 static void auditionCurrent() {
   Track& tr = seq.data.tracks[currentTrack];
   uint8_t note;
   if (currentPage == PAGE_SEQ) note = tr.steps[seqCursor].note;
-  else                          note = (tr.channel == DRUM_CHANNEL) ? 36 : 60;
+  else                         note = (tr.channel == DRUM_CHANNEL) ? 36 : 60;
   seq.audition(currentTrack, note);
 }
 
 // ---------------------------------------------------------------------------
-//  INPUT  (called every core0 loop)
+//  MENU VALUE EDIT  (one switch per page keeps every parameter reachable)
 // ---------------------------------------------------------------------------
 static void doLoad() {
   seq.stop();
@@ -115,61 +134,151 @@ static void doLoad() {
   }
 }
 
-static void handleRotate(int d, bool shift) {
-  Track& tr = seq.data.tracks[currentTrack];
+static void editValue(int d) {
+  const uint8_t t = currentTrack;
+  const uint8_t c = menuCursor[currentPage];
   switch (currentPage) {
-    case PAGE_SEQ:
-      if (shift) seq.editStepField(currentTrack, seqCursor, tr.stepField, d);
-      else       seqCursor = (uint8_t)clampi(seqCursor + d, 0, tr.length - 1);
-      break;
-
-    case PAGE_INST:
-      if (!shift) { instCursor = (uint8_t)clampi(instCursor + d, 0, 4); break; }
-      switch (instCursor) {
-        case 0: seq.setChannel(currentTrack, d); clampCursors(); break;
-        case 1: seq.setProgram(currentTrack, d); break;
-        case 2: seq.setBank(currentTrack);       break;   // toggle (any rotate)
-        case 3: seq.setOctave(currentTrack, d);  break;
-        case 4: seq.setLength(currentTrack, d);  clampCursors(); break;
+    case PAGE_TRACK:
+      switch (c) {
+        case 0: seq.setChannel(t, d); break;
+        case 1: seq.setProgram(t, d); break;
+        case 2: seq.setBank(t);       break;   // toggle (any rotate)
+        case 3: seq.setOctave(t, d);  break;
+        case 4: seq.setTranspose(t, d); break;
+        case 5: seq.setLength(t, d);  clampCursors(); break;
+        case 6: seq.setDirection(t, d); break;
+        case 7: seq.setClkDiv(t, d);  break;
+        case 8: seq.setHumVel(t, d);  break;
+        case 9: seq.setHumTime(t, d); break;
       }
       break;
-
     case PAGE_MIX:
-      if (!shift) { mixCursor = (uint8_t)clampi(mixCursor + d, 0, 3); break; }
-      switch (mixCursor) {
-        case 0: seq.setVol(currentTrack, d);     break;
-        case 1: seq.setPan(currentTrack, d);     break;
-        case 2: seq.setRevSend(currentTrack, d); break;
-        case 3: seq.setChoSend(currentTrack, d); break;
+      switch (c) {
+        case 0: seq.setVol(t, d);        break;
+        case 1: seq.setPan(t, d);        break;
+        case 2: seq.setRevSend(t, d);    break;
+        case 3: seq.setChoSend(t, d);    break;
+        case 4: seq.setExpression(t, d); break;
+        case 5: seq.setModulation(t, d); break;
+        case 6: seq.toggleMute(t);       break;
+        case 7: seq.toggleSolo(t);       break;
       }
       break;
-
+    case PAGE_SYNTH:
+      switch (c) {
+        case 0:  seq.setCutoff(t, d);    break;
+        case 1:  seq.setResonance(t, d); break;
+        case 2:  seq.setAttack(t, d);    break;
+        case 3:  seq.setDecay(t, d);     break;
+        case 4:  seq.setRelease(t, d);   break;
+        case 5:  seq.setVibRate(t, d);   break;
+        case 6:  seq.setVibDepth(t, d);  break;
+        case 7:  seq.setVibDelay(t, d);  break;
+        case 8:  seq.setBendRange(t, d); break;
+        case 9:  seq.togglePorta(t);     break;
+        case 10: seq.setPortaTime(t, d); break;
+        case 11: seq.toggleSustain(t);   break;
+      }
+      break;
     case PAGE_FX:
-      if (!shift) { fxCursor = (uint8_t)clampi(fxCursor + d, 0, 2); break; }
-      switch (fxCursor) {
+      switch (c) {
         case 0: seq.setRevType(d);   break;
-        case 1: seq.setChoType(d);   break;
-        case 2: seq.setMasterVol(d); break;
+        case 1: seq.setRevLevel(d);  break;
+        case 2: seq.setRevTime(d);   break;
+        case 3: seq.setChoType(d);   break;
+        case 4: seq.setChoLevel(d);  break;
+        case 5: seq.setChoRate(d);   break;
+        case 6: seq.setChoDepth(d);  break;
+        case 7: seq.setMasterVol(d); break;
       }
       break;
-
+    case PAGE_SCALE:
+      switch (c) {
+        case 0: seq.setScaleRoot(d); break;
+        case 1: seq.setScaleType(d); break;
+        case 2: seq.setScaleLock(d); break;
+        default: break;              // action rows ignore value edits
+      }
+      break;
     case PAGE_SONG:
-      if (!shift) { songCursor = (uint8_t)clampi(songCursor + d, 0, 7); break; }
-      switch (songCursor) {
+      switch (c) {
         case 0: seq.setBpm(d);   break;
         case 1: seq.setSwing(d); break;
         case 2: seq.setSpb(d);   break;
         case 3: seq.data.clockSrc = (seq.data.clockSrc == CLK_INTERNAL)
                                     ? CLK_EXTERNAL : CLK_INTERNAL; break;
         case 4: slotSel = (uint8_t)clampi(slotSel + d, 0, NUM_SONG_SLOTS - 1); break;
-        default: break;   // action rows ignore value edits
+        default: break;              // action rows ignore value edits
       }
       break;
+    default: break;
   }
+}
+
+// Rows whose click runs an action instead of toggling edit mode.
+static bool runAction() {
+  const uint8_t c = menuCursor[currentPage];
+  if (currentPage == PAGE_SCALE) {
+    if (c == 3) { seq.quantizeTrack(currentTrack); toast("TRACK QUANTIZED"); return true; }
+    if (c == 4) { seq.quantizeAll();               toast("ALL QUANTIZED");   return true; }
+  }
+  if (currentPage == PAGE_SONG) {
+    if (c == 5) {
+      char m[22];
+      if (Storage::save(slotSel, seq.data))
+           snprintf(m, sizeof(m), "SAVED slot %d", slotSel + 1);
+      else snprintf(m, sizeof(m), "SAVE FAILED");
+      toast(m);
+      return true;
+    }
+    if (c == 6) { doLoad(); return true; }
+    if (c == 7) { seq.gmReset(); toast("GM RESET SENT"); return true; }
+    if (c == 8) { seq.panic();   toast("PANIC");         return true; }
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+//  INPUT  (called every core0 loop)
+// ---------------------------------------------------------------------------
+static void handleRotate(int d, bool shift) {
+  Track& tr = seq.data.tracks[currentTrack];
+
+  if (currentPage == PAGE_SEQ) {
+    // hold a step key + rotate = edit that step directly (fast per-step edits)
+    int held = Keypad::heldKey();
+    if (held >= 0) {
+      uint8_t s = (uint8_t)((seqCursor / 16) * 16 + held);
+      if (s < tr.length) {
+        seq.editStepField(currentTrack, s, tr.stepField, d);
+        seqCursor = s;
+      }
+      Keypad::markActive();
+      return;
+    }
+    if (shift) { seq.editStepField(currentTrack, seqCursor, tr.stepField, d);
+                 Controls::suppressBack(); }
+    else       seqCursor = (uint8_t)clampi(seqCursor + d, 0, tr.length - 1);
+    return;
+  }
+
+  if (currentPage == PAGE_PERF) {
+    currentTrack = (uint8_t)((currentTrack + MAX_TRACKS + d) % MAX_TRACKS);
+    Pots::unlatch();
+    return;
+  }
+
+  // menu pages
+  if (shift)        { editValue(d); Controls::suppressBack(); }
+  else if (editMode)  editValue(d);
+  else menuCursor[currentPage] =
+         (uint8_t)clampi(menuCursor[currentPage] + d, 0, kRowCount[currentPage] - 1);
 }
 
 static void handleClick(bool shift) {
   Track& tr = seq.data.tracks[currentTrack];
+  if (shift) Controls::suppressBack();
+
   switch (currentPage) {
     case PAGE_SEQ:
       if (shift) {                              // cycle the per-step field
@@ -180,63 +289,119 @@ static void handleClick(bool shift) {
       }
       break;
 
-    case PAGE_INST:
-      if (instCursor == 2) seq.setBank(currentTrack);   // click also toggles bank
-      break;
-
-    case PAGE_SONG:
-      switch (songCursor) {
-        case 5: {                                       // Save
-          char m[22];
-          if (Storage::save(slotSel, seq.data))
-               snprintf(m, sizeof(m), "SAVED slot %d", slotSel + 1);
-          else snprintf(m, sizeof(m), "SAVE FAILED");
-          toast(m);
-        } break;
-        case 6: doLoad(); break;                        // Load
-        case 7: seq.gmReset(); toast("GM RESET SENT"); break;
-        default: break;
+    case PAGE_PERF:
+      if (shift) {
+        seq.toggleSolo(currentTrack);
+        toast(tr.solo ? "SOLO ON" : "SOLO OFF");
+      } else {
+        seq.toggleMute(currentTrack);
+        toast(tr.mute ? "MUTED" : "UNMUTED");
       }
       break;
 
-    default: break;
+    default:                                    // menu pages
+      if (runAction()) break;
+      editMode = !editMode;                     // click = enter/exit value edit
+      break;
+  }
+}
+
+static void handleKeypad(bool shift) {
+  for (uint8_t k = 0; k < 16; k++) {
+    if (Keypad::tap(k)) {
+      if (shift) {                              // SHIFT+key = pick track (anywhere)
+        selectTrack(k);
+        Controls::suppressBack();
+        continue;
+      }
+      switch (currentPage) {
+        case PAGE_SEQ: {
+          Track& tr = seq.data.tracks[currentTrack];
+          uint8_t s = (uint8_t)((seqCursor / 16) * 16 + k);
+          if (s < tr.length) { seq.toggleStep(currentTrack, s); seqCursor = s; }
+          break;
+        }
+        case PAGE_PERF:
+          seq.toggleMute(k);
+          break;
+        default:
+          selectTrack(k);
+          break;
+      }
+    }
+    if (Keypad::longPress(k)) {
+      switch (currentPage) {
+        case PAGE_SEQ: {
+          Track& tr = seq.data.tracks[currentTrack];
+          uint8_t s = (uint8_t)((seqCursor / 16) * 16 + k);
+          if (s < tr.length) { seqCursor = s; seq.audition(currentTrack, tr.steps[s].note); }
+          break;
+        }
+        case PAGE_PERF:
+          seq.toggleSolo(k);
+          toast(seq.data.tracks[k].solo ? "SOLO ON" : "SOLO OFF");
+          break;
+        default:
+          selectTrack(k);
+          break;
+      }
+    }
   }
 }
 
 void handleInput() {
-  // Transport
-  if (Controls::playPressed()) {
-    if (Controls::shiftHeld()) seq.startTop(); else seq.play();
+  bool shift = Controls::shiftHeld();
+
+  // ---- macro pots (context-sensitive, soft pickup) ----
+  uint8_t wrote = Pots::update(currentTrack);
+  if (wrote) {
+    uint8_t pot = (wrote & 1) ? 0 : 1;
+    char m[22];
+    snprintf(m, sizeof(m), "%s %d", Pots::paramName(pot, currentTrack),
+             Pots::lastValue(pot));
+    toast(m);
   }
-  // Page navigation
-  if (Controls::pagePressed()) {
-    if (Controls::shiftHeld()) prevPage(); else nextPage();
+
+  // ---- transport ----
+  if (Controls::confirmPressed()) {
+    if (shift) { seq.startTop(); Controls::suppressBack(); }
+    else       seq.play();
   }
-  // Track navigation / clear
+  if (Controls::confirmLong()) { seq.stop(); seq.panic(); toast("PANIC"); }
+
+  // ---- BACK: exit edit mode, else next page ----
+  if (Controls::backPressed()) {
+    if (editMode) editMode = false;
+    else          nextPage();
+  }
+
+  // ---- optional aux buttons ----
+  if (Controls::pagePressed())  { if (shift) { prevPage(); Controls::suppressBack(); } else nextPage(); }
   if (Controls::trackLongPress()) {
     seq.clearTrack(currentTrack);
     seqCursor = 0;
     toast("TRACK CLEARED");
   } else if (Controls::trackPressed()) {
-    if (Controls::shiftHeld()) prevTrack(); else nextTrack();
+    if (shift) { prevTrack(); Controls::suppressBack(); } else nextTrack();
   }
-  // Mute / solo
   if (Controls::mutePressed()) {
-    if (Controls::shiftHeld()) {
-      seq.toggleSolo(currentTrack);
+    if (shift) {
+      seq.toggleSolo(currentTrack); Controls::suppressBack();
       toast(seq.data.tracks[currentTrack].solo ? "SOLO ON" : "SOLO OFF");
     } else {
       seq.toggleMute(currentTrack);
       toast(seq.data.tracks[currentTrack].mute ? "MUTED" : "UNMUTED");
     }
   }
-  // Encoder long-press = audition
+
+  // ---- keypad ----
+  handleKeypad(shift);
+
+  // ---- encoder ----
   if (Controls::encLongPress()) auditionCurrent();
-  // Encoder rotate
   int d = Controls::encDelta();
-  if (d != 0) handleRotate(d, Controls::shiftHeld());
-  // Encoder click
-  if (Controls::encClick()) handleClick(Controls::shiftHeld());
+  if (d != 0) handleRotate(d, shift);
+  if (Controls::encClick()) handleClick(shift);
 }
 
 // ---------------------------------------------------------------------------
@@ -252,9 +417,10 @@ static void drawStatusBar() {
            currentTrack + 1, tr.channel);
   u8g2.drawStr(0, 7, buf);
 
-  // mute / solo flag
-  if (tr.solo)      u8g2.drawStr(78, 7, "S");
-  else if (tr.mute) u8g2.drawStr(78, 7, "M");
+  // flags: mute/solo + scale lock
+  if (tr.solo)      u8g2.drawStr(72, 7, "S");
+  else if (tr.mute) u8g2.drawStr(72, 7, "M");
+  if (seq.data.scaleLock != LOCK_OFF) u8g2.drawStr(79, 7, "L");
 
   // right: transport + bpm
   if (seq.running()) u8g2.drawBox(88, 1, 6, 6);          // play = filled square
@@ -282,11 +448,18 @@ static void drawRows(Row* rows, int n, int cursor) {
     bool sel = (i == cursor);
     if (sel) { u8g2.drawBox(0, top, 128, rowH); u8g2.setDrawColor(0); }
     u8g2.drawStr(2, top + 8, rows[i].label);
-    int vw = (int)strlen(rows[i].value) * 6;
-    u8g2.drawStr(126 - vw, top + 8, rows[i].value);
+    char vbuf[20];
+    if (sel && editMode) snprintf(vbuf, sizeof(vbuf), ">%s<", rows[i].value);
+    else                 snprintf(vbuf, sizeof(vbuf), "%s",  rows[i].value);
+    int vw = (int)strlen(vbuf) * 6;
+    u8g2.drawStr(126 - vw, top + 8, vbuf);
     if (sel) u8g2.setDrawColor(1);
   }
 }
+
+// value formatting helpers
+static void fmtOnOff(char* v, size_t n, uint8_t on) { strncpy(v, on ? "ON" : "OFF", n); v[n-1] = 0; }
+static void fmtBipolar(char* v, size_t n, uint8_t raw) { snprintf(v, n, "%+d", (int)raw - 64); }
 
 // ---- per page renderers ----------------------------------------------------
 static void renderSeq() {
@@ -316,13 +489,15 @@ static void renderSeq() {
   else                            noteName(sp.note, name, sizeof(name));
   name[7] = '\0';                                            // keep it short
 
-  char val[14];
+  char val[14]; val[0] = '\0';
   switch (tr.stepField) {
-    case SF_NOTE:  snprintf(val, sizeof(val), "[NOTE]%d", sp.note);  break;
-    case SF_VEL:   snprintf(val, sizeof(val), "[VEL]%d",  sp.vel);   break;
-    case SF_GATE:  snprintf(val, sizeof(val), "[GATE]%d", sp.gate);  break;
-    case SF_PROB:  snprintf(val, sizeof(val), "[PRB]%d",  sp.prob);  break;
-    case SF_MICRO: snprintf(val, sizeof(val), "[MIC]%+d", sp.micro); break;
+    case SF_NOTE:    snprintf(val, sizeof(val), "[NOTE]%d",  sp.note);    break;
+    case SF_VEL:     snprintf(val, sizeof(val), "[VEL]%d",   sp.vel);     break;
+    case SF_GATE:    snprintf(val, sizeof(val), "[GATE]%d",  sp.gate);    break;
+    case SF_PROB:    snprintf(val, sizeof(val), "[PRB]%d",   sp.prob);    break;
+    case SF_RATCHET: snprintf(val, sizeof(val), "[RCH]x%d",  sp.ratchet); break;
+    case SF_MICRO:   snprintf(val, sizeof(val), "[MIC]%+d",  sp.micro);   break;
+    case SF_TIE:     snprintf(val, sizeof(val), "[TIE]%s",   sp.tie ? "ON" : "OFF"); break;
   }
 
   u8g2.setFont(u8g2_font_5x7_tr);
@@ -334,9 +509,29 @@ static void renderSeq() {
   u8g2.drawStr(127 - vw, 63, val);
 }
 
-static void renderInst() {
+static void renderPerf() {
+  // 4x4 grid mirroring the physical keypad: key k = track k.
+  const int top = 12, cellW = 32, cellH = 13;
+  u8g2.setFont(u8g2_font_5x7_tr);
+  bool solos = seq.anySolo();
+  for (uint8_t t = 0; t < MAX_TRACKS; t++) {
+    int x = (t & 3) * cellW, y = top + (t >> 2) * cellH;
+    Track& tr = seq.data.tracks[t];
+    bool sel = (t == currentTrack);
+    if (sel) u8g2.drawFrame(x, y, cellW - 1, cellH - 1);
+    u8g2.drawFrame(x + 1, y + 1, cellW - 3, cellH - 3);
+    char b[8];
+    const char* flag = tr.solo ? "S" : (tr.mute ? "M" : (solos ? "-" : ""));
+    snprintf(b, sizeof(b), "%d%s", t + 1, flag);
+    u8g2.drawStr(x + 4, y + 9, b);
+    // audible tracks get a filled dot on the right of the cell
+    if (seq.trackAudible(t)) u8g2.drawBox(x + cellW - 8, y + 4, 4, 4);
+  }
+}
+
+static void renderTrack() {
   Track& tr = seq.data.tracks[currentTrack];
-  Row r[5];
+  Row r[10];
   char nm[12];
 
   strcpy(r[0].label, "Channel");
@@ -355,15 +550,30 @@ static void renderInst() {
   strcpy(r[3].label, "Octave");
   snprintf(r[3].value, sizeof(r[3].value), "%+d", tr.octave);
 
-  strcpy(r[4].label, "Length");
-  snprintf(r[4].value, sizeof(r[4].value), "%d", tr.length);
+  strcpy(r[4].label, "Transpose");
+  snprintf(r[4].value, sizeof(r[4].value), "%+d st", tr.transpose);
 
-  drawRows(r, 5, instCursor);
+  strcpy(r[5].label, "Length");
+  snprintf(r[5].value, sizeof(r[5].value), "%d", tr.length);
+
+  strcpy(r[6].label, "Direction");
+  strcpy(r[6].value, kDirName[tr.direction % DIR_COUNT]);
+
+  strcpy(r[7].label, "Clock Div");
+  snprintf(r[7].value, sizeof(r[7].value), "/%d", kClockDivOptions[tr.clkDiv % NUM_DIV_OPTIONS]);
+
+  strcpy(r[8].label, "Human Vel");
+  snprintf(r[8].value, sizeof(r[8].value), "%d", tr.humVel);
+
+  strcpy(r[9].label, "Human Time");
+  snprintf(r[9].value, sizeof(r[9].value), "%d", tr.humTime);
+
+  drawRows(r, 10, menuCursor[PAGE_TRACK]);
 }
 
 static void renderMix() {
   Track& tr = seq.data.tracks[currentTrack];
-  Row r[4];
+  Row r[8];
 
   strcpy(r[0].label, "Volume");
   snprintf(r[0].value, sizeof(r[0].value), "%d", tr.vol);
@@ -379,24 +589,81 @@ static void renderMix() {
   strcpy(r[3].label, "Chorus Snd");
   snprintf(r[3].value, sizeof(r[3].value), "%d", tr.choSend);
 
-  drawRows(r, 4, mixCursor);
+  strcpy(r[4].label, "Expression");
+  snprintf(r[4].value, sizeof(r[4].value), "%d", tr.expression);
+
+  strcpy(r[5].label, "Mod Wheel");
+  snprintf(r[5].value, sizeof(r[5].value), "%d", tr.modulation);
+
+  strcpy(r[6].label, "Mute");
+  fmtOnOff(r[6].value, sizeof(r[6].value), tr.mute);
+
+  strcpy(r[7].label, "Solo");
+  fmtOnOff(r[7].value, sizeof(r[7].value), tr.solo);
+
+  drawRows(r, 8, menuCursor[PAGE_MIX]);
+}
+
+static void renderSynth() {
+  Track& tr = seq.data.tracks[currentTrack];
+  Row r[12];
+
+  strcpy(r[0].label, "Cutoff");     fmtBipolar(r[0].value, sizeof(r[0].value), tr.cutoff);
+  strcpy(r[1].label, "Resonance");  fmtBipolar(r[1].value, sizeof(r[1].value), tr.resonance);
+  strcpy(r[2].label, "Attack");     fmtBipolar(r[2].value, sizeof(r[2].value), tr.attack);
+  strcpy(r[3].label, "Decay");      fmtBipolar(r[3].value, sizeof(r[3].value), tr.decay);
+  strcpy(r[4].label, "Release");    fmtBipolar(r[4].value, sizeof(r[4].value), tr.release);
+  strcpy(r[5].label, "Vib Rate");   fmtBipolar(r[5].value, sizeof(r[5].value), tr.vibRate);
+  strcpy(r[6].label, "Vib Depth");  fmtBipolar(r[6].value, sizeof(r[6].value), tr.vibDepth);
+  strcpy(r[7].label, "Vib Delay");  fmtBipolar(r[7].value, sizeof(r[7].value), tr.vibDelay);
+  strcpy(r[8].label, "Bend Range");
+  snprintf(r[8].value, sizeof(r[8].value), "%d st", tr.bendRange);
+  strcpy(r[9].label, "Portamento"); fmtOnOff(r[9].value, sizeof(r[9].value), tr.portaOn);
+  strcpy(r[10].label, "Porta Time");
+  snprintf(r[10].value, sizeof(r[10].value), "%d", tr.portaTime);
+  strcpy(r[11].label, "Sustain");   fmtOnOff(r[11].value, sizeof(r[11].value), tr.sustain);
+
+  drawRows(r, 12, menuCursor[PAGE_SYNTH]);
 }
 
 static void renderFx() {
-  Row r[3];
-  strcpy(r[0].label, "Reverb");
+  Row r[8];
+  strcpy(r[0].label, "Rev Type");
   snprintf(r[0].value, sizeof(r[0].value), "%d %s", seq.data.revType,
            kRevName[seq.data.revType & 7]);
-  strcpy(r[1].label, "Chorus");
-  snprintf(r[1].value, sizeof(r[1].value), "%d %s", seq.data.choType,
+  strcpy(r[1].label, "Rev Level");
+  snprintf(r[1].value, sizeof(r[1].value), "%d", seq.data.revLevel);
+  strcpy(r[2].label, "Rev Time");
+  snprintf(r[2].value, sizeof(r[2].value), "%d", seq.data.revTime);
+  strcpy(r[3].label, "Cho Type");
+  snprintf(r[3].value, sizeof(r[3].value), "%d %s", seq.data.choType,
            kChoName[seq.data.choType & 7]);
-  strcpy(r[2].label, "Master Vol");
-  snprintf(r[2].value, sizeof(r[2].value), "%d", seq.data.masterVol);
-  drawRows(r, 3, fxCursor);
+  strcpy(r[4].label, "Cho Level");
+  snprintf(r[4].value, sizeof(r[4].value), "%d", seq.data.choLevel);
+  strcpy(r[5].label, "Cho Rate");
+  snprintf(r[5].value, sizeof(r[5].value), "%d", seq.data.choRate);
+  strcpy(r[6].label, "Cho Depth");
+  snprintf(r[6].value, sizeof(r[6].value), "%d", seq.data.choDepth);
+  strcpy(r[7].label, "Master Vol");
+  snprintf(r[7].value, sizeof(r[7].value), "%d", seq.data.masterVol);
+  drawRows(r, 8, menuCursor[PAGE_FX]);
+}
+
+static void renderScale() {
+  Row r[5];
+  strcpy(r[0].label, "Root");
+  strcpy(r[0].value, kRootNames[seq.data.scaleRoot % 12]);
+  strcpy(r[1].label, "Scale");
+  strcpy(r[1].value, kScales[seq.data.scaleType % NUM_SCALES].name);
+  strcpy(r[2].label, "Lock");
+  fmtOnOff(r[2].value, sizeof(r[2].value), seq.data.scaleLock != LOCK_OFF);
+  strcpy(r[3].label, "> Quant Trk"); r[3].value[0] = '\0';
+  strcpy(r[4].label, "> Quant All"); r[4].value[0] = '\0';
+  drawRows(r, 5, menuCursor[PAGE_SCALE]);
 }
 
 static void renderSong() {
-  Row r[8];
+  Row r[9];
   strcpy(r[0].label, "BPM");
   snprintf(r[0].value, sizeof(r[0].value), "%d", seq.data.bpm);
 
@@ -416,8 +683,9 @@ static void renderSong() {
   strcpy(r[5].label, "> Save");      r[5].value[0] = '\0';
   strcpy(r[6].label, "> Load");      r[6].value[0] = '\0';
   strcpy(r[7].label, "> GM Reset");  r[7].value[0] = '\0';
+  strcpy(r[8].label, "> Panic");     r[8].value[0] = '\0';
 
-  drawRows(r, 8, songCursor);
+  drawRows(r, 9, menuCursor[PAGE_SONG]);
 }
 
 static void drawToast() {
@@ -449,11 +717,14 @@ void render() {
   u8g2.clearBuffer();
   drawStatusBar();
   switch (currentPage) {
-    case PAGE_SEQ:  renderSeq();  break;
-    case PAGE_INST: renderInst(); break;
-    case PAGE_MIX:  renderMix();  break;
-    case PAGE_FX:   renderFx();   break;
-    case PAGE_SONG: renderSong(); break;
+    case PAGE_SEQ:   renderSeq();   break;
+    case PAGE_PERF:  renderPerf();  break;
+    case PAGE_TRACK: renderTrack(); break;
+    case PAGE_MIX:   renderMix();   break;
+    case PAGE_SYNTH: renderSynth(); break;
+    case PAGE_FX:    renderFx();    break;
+    case PAGE_SCALE: renderScale(); break;
+    case PAGE_SONG:  renderSong();  break;
   }
   drawToast();
   u8g2.sendBuffer();

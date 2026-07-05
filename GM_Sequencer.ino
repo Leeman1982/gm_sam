@@ -1,5 +1,5 @@
 // ============================================================================
-//  GM_Sequencer.ino  -  Dual-core GM step sequencer for the Dream SAM2695
+//  GM_Sequencer.ino  -  Dual-core GM "Supreme" step sequencer for the SAM2695
 //
 //  Target : Raspberry Pi Pico (RP2040), Earle Philhower arduino-pico core.
 //  Build  : select your Pico board, set Flash Size to a layout WITH a
@@ -7,7 +7,7 @@
 //           save/load works. Install the "U8g2" library.
 //
 //  CORE SPLIT
-//    core0 : UI (SH1106) + encoder/buttons + LittleFS storage.
+//    core0 : UI (SH1106) + encoder/buttons/keypad/pots + LittleFS storage.
 //    core1 : real-time transport + the ONLY core that drives the MIDI UART.
 //  The two cores share state through the single global `seq` instance using
 //  atomic scalar fields and volatile request flags (see Sequencer.h).
@@ -17,6 +17,8 @@
 #include "Sequencer.h"
 #include "GMSynth.h"
 #include "Controls.h"
+#include "Keypad.h"
+#include "Pots.h"
 #include "Storage.h"
 #include "UI.h"
 
@@ -35,12 +37,15 @@ void setup() {
 
   Storage::begin();           // mount LittleFS (formats on first run)
   Controls::begin();          // encoder interrupts + button pins
+  Keypad::begin();            // 16 step keys (matrix or CD74HC4067 mux)
+  Pots::begin();              // 2 analog macro pots (ADC0/ADC1)
   UI::begin();                // I2C + SH1106
 }
 
 void loop() {
   static uint32_t lastDraw = 0;
   Controls::update();         // poll buttons, accumulate encoder
+  Keypad::update();           // scan the 16 performance keys
   UI::handleInput();          // turn input into edits / navigation
 
   uint32_t now = millis();

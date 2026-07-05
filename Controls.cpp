@@ -36,7 +36,7 @@ namespace {
 
   const uint32_t DEBOUNCE_MS = 5;
 
-  Button bShift, bPlay, bPage, bTrack, bMute, bEncSw;
+  Button bBack, bConfirm, bPage, bTrack, bMute, bEncSw;
 
   void initButton(Button& b, uint8_t pin, bool supportsLong, uint16_t longMs = 600) {
     b.pin = pin;
@@ -82,18 +82,20 @@ void begin() {
   attachInterrupt(digitalPinToInterrupt(PIN_ENC_A), encISR, CHANGE);
   attachInterrupt(digitalPinToInterrupt(PIN_ENC_B), encISR, CHANGE);
 
-  initButton(bEncSw, PIN_ENC_SW, true, 600);
-  initButton(bShift, PIN_BTN_SHIFT, false);
-  initButton(bPlay,  PIN_BTN_PLAY,  false);
-  initButton(bPage,  PIN_BTN_PAGE,  false);
-  initButton(bTrack, PIN_BTN_TRACK, true, 700);
-  initButton(bMute,  PIN_BTN_MUTE,  false);
+  initButton(bEncSw,   PIN_ENC_SW,      true, 600);
+  // BACK is long-capable: the "long" here is the SHIFT hold. Its short edge
+  // is deferred to release, which is exactly the modifier behaviour we want.
+  initButton(bBack,    PIN_BTN_BACK,    true, 60000); // never auto-fires long
+  initButton(bConfirm, PIN_BTN_CONFIRM, true, 700);   // long = panic
+  initButton(bPage,    PIN_BTN_PAGE,    false);
+  initButton(bTrack,   PIN_BTN_TRACK,   true, 700);
+  initButton(bMute,    PIN_BTN_MUTE,    false);
 }
 
 void update() {
   serviceButton(bEncSw);
-  serviceButton(bShift);
-  serviceButton(bPlay);
+  serviceButton(bBack);
+  serviceButton(bConfirm);
   serviceButton(bPage);
   serviceButton(bTrack);
   serviceButton(bMute);
@@ -111,11 +113,17 @@ int encDelta() {
 
 bool encClick()      { return takeEdge(bEncSw.edgePress); }
 bool encLongPress()  { return takeEdge(bEncSw.edgeLong); }
-bool shiftHeld()     { return !bShift.stable; }
-bool playPressed()   { return takeEdge(bPlay.edgePress); }
+
+bool shiftHeld()     { return !bBack.stable; }
+bool backPressed()   { return takeEdge(bBack.edgePress); }
+void suppressBack()  { bBack.longFired = true; }   // withholds the release edge
+
+bool confirmPressed(){ return takeEdge(bConfirm.edgePress); }
+bool confirmLong()   { return takeEdge(bConfirm.edgeLong); }
+
 bool pagePressed()   { return takeEdge(bPage.edgePress); }
 bool trackPressed()  { return takeEdge(bTrack.edgePress); }
-bool mutePressed()   { return takeEdge(bMute.edgePress); }
 bool trackLongPress(){ return takeEdge(bTrack.edgeLong); }
+bool mutePressed()   { return takeEdge(bMute.edgePress); }
 
 } // namespace Controls
