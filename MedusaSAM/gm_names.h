@@ -238,3 +238,21 @@ inline void noteName(uint8_t note, char* buf, size_t n) {
   int octave = (int)note / 12 - 1;          // MIDI note 60 == C4 (middle C convention)
   snprintf(buf, n, "%s%d", names[note % 12], octave);
 }
+
+// ---- GM/GS drum-kit names (program number on a rhythm part) -----------------
+struct KitName { uint8_t prog; const char* name; };
+static const KitName kKitNames[] = {
+  {0,"Standard"},{8,"Room"},{16,"Power"},{24,"Electronic"},{25,"TR-808"},
+  {32,"Jazz"},{40,"Brush"},{48,"Orchestra"},{56,"SFX"},{127,"MT-32"}
+};
+inline void gmKitName(uint8_t prog, char* buf, size_t n) {
+  for (auto& k : kKitNames)
+    if (k.prog == prog) { snprintf(buf, n, "%s", k.name); return; }
+  snprintf(buf, n, "Kit %u", (unsigned)prog);
+}
+
+// ---- SAM2695 effect program names (CC80 / CC81) ------------------------------
+static const char* const kRevTypeNames[8] =
+  {"Room1","Room2","Room3","Hall1","Hall2","Plate","Delay","PanDly"};
+static const char* const kChoTypeNames[8] =
+  {"Chor1","Chor2","Chor3","Chor4","FBChor","Flangr","ShrtDl","FB Dly"};
