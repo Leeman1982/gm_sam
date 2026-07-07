@@ -32,7 +32,8 @@
 #define PIN_OLED_SCL     5
 #define OLED_ADDR        0x3F     // EstarDyn module (SA0 pulled high); 0x3C if SA0 is low
 #define OLED_I2C_HZ      400000
-#define OLED_CONTRAST    200      // ST7567S needs far more contrast than SH1106 (0..255)
+#define OLED_CONTRAST    160      // ST7567S needs far more contrast than SH1106 (0..255);
+                                   // 160 is a confirmed-working value, tune 150-220 by eye
 
 // The ST7567S COG glass on this module physically clips a few pixels at the
 // left edge and produces garbled pixels in the rightmost columns.  All

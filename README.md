@@ -83,9 +83,10 @@ are different from a plain SH1106/SSD1306 panel:
 - **I2C address is `0x3F`**, not `0x3C` — the EstarDyn board pulls SA0 high.
   If your module has SA0 low, change `OLED_ADDR` in `config.h` to `0x3C`.
 - **Contrast needs to be set explicitly** (`OLED_CONTRAST` in `config.h`,
-  default 200) — the ST7567S resets to a much dimmer level than an OLED and
-  reads as a blank screen until contrast is turned up. Tune by eye in the
-  150–220 range if your panel looks too light or too dark.
+  default 160, a confirmed-working value) — the ST7567S resets to a much
+  dimmer level than an OLED and reads as a blank screen until contrast is
+  turned up. Tune by eye in the 150–220 range if your panel looks too light
+  or too dark.
 
 The COG glass on this panel also clips a few pixels at the left edge and
 garbles the rightmost columns, so the firmware confines all drawing to a

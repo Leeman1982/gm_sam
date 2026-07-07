@@ -25,8 +25,8 @@ void UI::begin(Song* song, Engine* eng, Controls* ctl) {
     _song = song; _eng = eng; _ctl = ctl;
     Wire.setSDA(PIN_OLED_SDA);
     Wire.setSCL(PIN_OLED_SCL);
-    Wire.begin();
-    Wire.setClock(OLED_I2C_HZ);
+    Wire.setClock(OLED_I2C_HZ);           // set before begin() -- matches the
+    Wire.begin();                         // known-working RP2350 init order
     oled.setI2CAddress(OLED_ADDR << 1);   // U8g2 wants the 8-bit address
     oled.begin();
     oled.setBusClock(OLED_I2C_HZ);
