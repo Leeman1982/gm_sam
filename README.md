@@ -31,7 +31,7 @@ the `main` branch.)
 |------|-------|
 | Raspberry Pi Pico (RP2040) | any RP2040 board with GP0–GP13 free |
 | Dream SAM2695 GM module | the AliExpress "MIDI digital music module, GM 2.0, 128 tones" (Nulllab etc.) with speaker/phones out |
-| 1.3" SH1106 128×64 I2C OLED | the OLED+encoder combo panel works perfectly |
+| 1.3" ST7567S COG LCD, 4-pin I2C (EstarDyn module) | the OLED-style encoder combo panel works perfectly |
 | EC11 rotary encoder w/ push | often on the same panel as the OLED |
 | 5× momentary buttons | PLAY, SHIFT, PAGE, TRACK, REC |
 | *(optional)* DIN-5 MIDI shield | for driving other gear from the same MIDI stream |
@@ -47,8 +47,8 @@ side to **GND** (internal pull-ups are enabled in firmware).
 |--------|----------|-------|
 | MIDI TX → SAM2695 | **GP0** | to the module's MIDI-IN / RX pad (3.3 V TTL, direct) |
 | MIDI RX (future) | GP1 | reserved for external clock sync — never above 3.3 V |
-| OLED SDA | GP4 | I2C0 |
-| OLED SCL | GP5 | I2C0 @ 400 kHz |
+| LCD SDA | GP4 | I2C0 |
+| LCD SCL | GP5 | I2C0 @ 400 kHz |
 | Encoder A / B / push | GP6 / GP7 / GP8 | |
 | PLAY | GP9 | |
 | SHIFT | GP10 | modifier (hold) |
@@ -74,6 +74,23 @@ Wire by function, not silkscreen: Pico **GP0 → the shield's "1 / TX" pad**
 (drives MIDI OUT), GP1 → "0 / RX" (future sync-in), and **power the shield
 from 3V3** — the RP2040 is not 5 V-tolerant, and the shield's opto output
 idles at its VCC.
+
+### The ST7567S display (EstarDyn module)
+
+Same 4-pin I2C wiring as any OLED module (VCC/GND/SDA/SCL), but two things
+are different from a plain SH1106/SSD1306 panel:
+
+- **I2C address is `0x3F`**, not `0x3C` — the EstarDyn board pulls SA0 high.
+  If your module has SA0 low, change `OLED_ADDR` in `config.h` to `0x3C`.
+- **Contrast needs to be set explicitly** (`OLED_CONTRAST` in `config.h`,
+  default 200) — the ST7567S resets to a much dimmer level than an OLED and
+  reads as a blank screen until contrast is turned up. Tune by eye in the
+  150–220 range if your panel looks too light or too dark.
+
+The COG glass on this panel also clips a few pixels at the left edge and
+garbles the rightmost columns, so the firmware confines all drawing to a
+safe zone (`SCREEN_L`/`SCREEN_R` in `config.h`, default columns 5–120)
+instead of the full 0–127 canvas.
 
 ## Building (Arduino IDE)
 
@@ -187,7 +204,7 @@ MedusaSAM/
   engine.h/.cpp   core1: 96-PPQN transport, event scheduler, reconcile pass
   sound_source.h  note routing: SAM today, the baked-synth layer tomorrow
   controls.h/.cpp encoder (ISR quadrature) + debounced buttons
-  ui.h/.cpp       SH1106 views + input handling
+  ui.h/.cpp       ST7567S views + input handling
   storage.h/.cpp  LittleFS song save/load
   gm_names.h      GM instrument / drum / kit / FX name tables (PROGMEM)
 ```

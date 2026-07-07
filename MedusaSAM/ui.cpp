@@ -6,8 +6,8 @@
 #include <U8g2lib.h>
 #include <Wire.h>
 
-// 1.3" SH1106 128x64, hardware I2C, full frame buffer.
-static U8G2_SH1106_128X64_NONAME_F_HW_I2C oled(U8G2_R0, U8X8_PIN_NONE);
+// 1.3" ST7567S COG LCD (EstarDyn 4-pin I2C module), hardware I2C, full frame buffer.
+static U8G2_ST7567_ENH_DG128064_F_HW_I2C oled(U8G2_R0, U8X8_PIN_NONE);
 
 static inline int clampi(int v, int lo, int hi) {
     return v < lo ? lo : (v > hi ? hi : v);
@@ -26,18 +26,30 @@ void UI::begin(Song* song, Engine* eng, Controls* ctl) {
     Wire.setSDA(PIN_OLED_SDA);
     Wire.setSCL(PIN_OLED_SCL);
     Wire.begin();
-    oled.setI2CAddress(OLED_ADDR << 1);
+    Wire.setClock(OLED_I2C_HZ);
+    oled.setI2CAddress(OLED_ADDR << 1);   // U8g2 wants the 8-bit address
     oled.begin();
     oled.setBusClock(OLED_I2C_HZ);
+    oled.setContrast(OLED_CONTRAST);      // ST7567S: too low a value = blank screen
 
     // Boot splash: proves the panel is wired before any sequencer state matters.
     oled.clearBuffer();
     oled.setFont(u8g2_font_6x10_tr);
-    oled.drawStr(25, 24, "MEDUSA  SAM");
+    drawCentered(24, "MEDUSA  SAM");
     oled.setFont(u8g2_font_5x7_tr);
-    oled.drawStr(16, 40, "SAM2695 GM sequencer");
-    oled.drawStr(28, 52, "16trk x 64stp");
+    drawCentered(40, "SAM2695 GM sequencer");
+    drawCentered(52, "16trk x 64stp");
     oled.sendBuffer();
+}
+
+// Horizontally centers `s` (in the currently-set font) within the display's
+// safe zone (SCREEN_L..SCREEN_R) -- the ST7567S COG clips/garbles the raw
+// canvas edges, so nothing should be positioned by hand against 0/127.
+void UI::drawCentered(int y, const char* s) {
+    int w = oled.getStrWidth(s);
+    int x = SCREEN_L + (SCREEN_W - w) / 2;
+    if (x < SCREEN_L) x = SCREEN_L;
+    oled.drawStr(x, y, s);
 }
 
 void UI::toast(const char* msg) {
@@ -547,18 +559,18 @@ void UI::listRowText(uint8_t row, char* buf, size_t n) {
 void UI::drawHeader() {
     char buf[20];
     oled.setFont(u8g2_font_5x7_tr);
-    oled.drawStr(0, 7, _eng->running() ? ">" : "#");
+    oled.drawStr(SCREEN_L, 7, _eng->running() ? ">" : "#");
     snprintf(buf, sizeof(buf), "%u", (unsigned)_song->bpm);
-    oled.drawStr(7, 7, buf);
+    oled.drawStr(SCREEN_L + 7, 7, buf);
     snprintf(buf, sizeof(buf), "P%u", (unsigned)_eng->playPat + 1);
-    oled.drawStr(28, 7, buf);
-    oled.drawStr(44, 7, kViewNames[(int)_view]);
-    char lbl[14]; trackLabel(_track, lbl, sizeof(lbl));
+    oled.drawStr(SCREEN_L + 24, 7, buf);
+    oled.drawStr(SCREEN_L + 38, 7, kViewNames[(int)_view]);
+    char lbl[12]; trackLabel(_track, lbl, sizeof(lbl));
     const TrackCfg& tc = _song->track[_track];
     snprintf(buf, sizeof(buf), "%02u%s%s", (unsigned)_track + 1,
              tc.mute ? "m" : (tc.solo ? "s" : " "), lbl);
-    oled.drawStr(72, 7, buf);
-    oled.drawHLine(0, 9, 128);
+    oled.drawStr(SCREEN_L + 62, 7, buf);
+    oled.drawHLine(SCREEN_L, 9, SCREEN_W);
 }
 
 void UI::drawStepView() {
@@ -567,7 +579,9 @@ void UI::drawStepView() {
     uint8_t playhead = _eng->trackStep[_track];
     uint8_t win  = (uint8_t)(_cursor / STEPS_PER_PAGE);
     uint8_t base = (uint8_t)(win * STEPS_PER_PAGE);
-    const int x0 = 2, y0 = 14, cw = 15, ch = 22, gap = 1;
+    const int y0 = 14, ch = 22, gap = 1;
+    const int cw = SCREEN_W / 8;                        // 8 columns per row
+    const int x0 = SCREEN_L + (SCREEN_W - cw * 8) / 2;   // center the leftover
 
     for (int i = 0; i < STEPS_PER_PAGE; i++) {
         uint8_t sidx = (uint8_t)(base + i);
@@ -617,12 +631,13 @@ void UI::drawStepView() {
              kStepFieldNames[_stepField], val,
              stepAccent(cs) ? " A" : "", stepTie(cs) ? " ~" : "", pg);
     oled.setFont(u8g2_font_4x6_tr);
-    oled.drawStr(2, 63, buf);
+    oled.drawStr(SCREEN_L, 63, buf);
 }
 
 void UI::drawMixView() {
-    const int bw = 8;                          // 16 * 8 = 128 px
-    const int x0 = 0, yBase = 56, hMax = 36;
+    const int bw = SCREEN_W / 16;                       // 16 track columns
+    const int x0 = SCREEN_L + (SCREEN_W - bw * 16) / 2;  // center the leftover
+    const int yBase = 56, hMax = 36;
     for (int t = 0; t < NUM_TRACKS; t++) {
         const TrackCfg& c = _song->track[t];
         int x = x0 + t * bw;
@@ -638,28 +653,29 @@ void UI::drawMixView() {
     snprintf(buf, sizeof(buf), "T%02u %s v%u%s%s", _track + 1, lbl, c.vol,
              c.mute ? " MUTE" : "", c.solo ? " SOLO" : "");
     oled.setFont(u8g2_font_4x6_tr);
-    oled.drawStr(2, 63, buf);
+    oled.drawStr(SCREEN_L, 63, buf);
 }
 
 void UI::drawListView() {
     uint8_t count = listRowCount();
     oled.setFont(u8g2_font_5x7_tr);
     char row[26];
+    const int rowW = SCREEN_W - 8;       // reserve the right edge for the scrollbar
     for (uint8_t i = 0; i < 7; i++) {
         uint8_t r = (uint8_t)(_scroll + i);
         if (r >= count) break;
         int y = 16 + i * 7;
         listRowText(r, row, sizeof(row));
-        if (r == _field) { oled.drawBox(0, y - 6, 122, 8); oled.setDrawColor(0); }
-        oled.drawStr(3, y, row);
+        if (r == _field) { oled.drawBox(SCREEN_L, y - 6, rowW, 8); oled.setDrawColor(0); }
+        oled.drawStr(SCREEN_L + 3, y, row);
         oled.setDrawColor(1);
     }
     // scrollbar
     if (count > 7) {
         int barH = (7 * 52) / count; if (barH < 4) barH = 4;
         int barY = 11 + ((int)_scroll * (52 - barH)) / (count - 7);
-        oled.drawVLine(126, 11, 52);
-        oled.drawBox(124, barY, 3, barH);
+        oled.drawVLine(SCREEN_R - 3, 11, 52);
+        oled.drawBox(SCREEN_R - 5, barY, 3, barH);
     }
 }
 
@@ -677,10 +693,13 @@ void UI::render() {
     }
     if (_toast[0] && now < _toastUntil) {
         oled.setFont(u8g2_font_6x10_tr);
-        int w = strlen(_toast) * 6 + 6;
-        oled.setDrawColor(0); oled.drawBox(64 - w / 2, 26, w, 13); oled.setDrawColor(1);
-        oled.drawFrame(64 - w / 2, 26, w, 13);
-        oled.drawStr(64 - w / 2 + 3, 36, _toast);
+        int tw = oled.getStrWidth(_toast);
+        int w  = tw + 6;
+        int bx = SCREEN_L + (SCREEN_W - w) / 2;
+        if (bx < SCREEN_L) bx = SCREEN_L;
+        oled.setDrawColor(0); oled.drawBox(bx, 26, w, 13); oled.setDrawColor(1);
+        oled.drawFrame(bx, 26, w, 13);
+        oled.drawStr(bx + 3, 36, _toast);
     } else if (_toast[0] && now >= _toastUntil) _toast[0] = 0;
 
     oled.sendBuffer();

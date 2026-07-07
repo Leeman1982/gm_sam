@@ -1,7 +1,7 @@
 #pragma once
 // ============================================================================
 //  Medusa SAM  --  ui.h
-//  SH1106 OLED interface driven by the encoder + 5 buttons (core0).
+//  ST7567S COG LCD interface driven by the encoder + 5 buttons (core0).
 //
 //  Control scheme (SHIFT = hold the SHIFT button) -- identical to Medusa GM:
 //    PLAY              play / stop          SHIFT+PLAY   continue (resume)
@@ -85,6 +85,7 @@ private:
     void drawStepView();
     void drawMixView();
     void drawListView();
+    void drawCentered(int y, const char* s);   // horizontally centers within SCREEN_L..SCREEN_R
 
     const char* trackLabel(uint8_t t, char* buf, size_t n);
 };

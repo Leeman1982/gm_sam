@@ -6,7 +6,7 @@
 //
 //  Board:   Raspberry Pi Pico (RP2040), arduino-pico core by earlephilhower
 //  Synth:   Dream SAM2695 "GM 2.0 music module" -- serial MIDI @ 31250 baud
-//  Display: 1.3" SH1106 128x64 I2C OLED (U8g2)
+//  Display: 1.3" ST7567S COG LCD, 4-pin I2C (EstarDyn module, U8g2)
 //  Input:   EC11 rotary encoder w/ push + 5 momentary buttons
 //
 //  This is the Medusa pinout: the OLED / encoder / button map is identical to
@@ -25,13 +25,21 @@
 #define PIN_MIDI_RX      1        // reserved: external MIDI clock in
 #define MIDI_BAUD        31250
 
-// ─── 1.3" OLED (SH1106) over hardware I2C0 ──────────────────────────────────
-// The common encoder+OLED panel: CON SDA SCL PSH TRA TRB BAK GND VCC.
+// ─── 1.3" ST7567S COG LCD (EstarDyn 4-pin I2C module) over hardware I2C0 ────
+// The common encoder+OLED-style panel: CON SDA SCL PSH TRA TRB BAK GND VCC.
 // Add 2.2k-4.7k pull-ups on SDA/SCL if your module does not include them.
 #define PIN_OLED_SDA     4
 #define PIN_OLED_SCL     5
-#define OLED_ADDR        0x3C     // some panels are 0x3D
+#define OLED_ADDR        0x3F     // EstarDyn module (SA0 pulled high); 0x3C if SA0 is low
 #define OLED_I2C_HZ      400000
+#define OLED_CONTRAST    200      // ST7567S needs far more contrast than SH1106 (0..255)
+
+// The ST7567S COG glass on this module physically clips a few pixels at the
+// left edge and produces garbled pixels in the rightmost columns.  All
+// drawing code uses this safe zone instead of the raw 0..127 canvas.
+#define SCREEN_L          5       // first safe column
+#define SCREEN_R        120       // one past the last safe column
+#define SCREEN_W        (SCREEN_R - SCREEN_L)
 
 // ─── Rotary encoder (EC11 w/ push) ──────────────────────────────────────────
 #define PIN_ENC_A        6

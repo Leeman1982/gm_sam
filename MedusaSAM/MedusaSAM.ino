@@ -7,11 +7,11 @@
 //  core1 belongs to timing, which is why the groove is rock solid.
 //
 //  Hardware:  Raspberry Pi Pico (RP2040)  |  Arduino IDE w/ arduino-pico core
-//             SAM2695 GM module (MIDI in @31250)  |  1.3" SH1106 I2C OLED
+//             SAM2695 GM module (MIDI in @31250)  |  1.3" ST7567S COG LCD
 //             EC11 rotary encoder + 5 buttons     |  Medusa pinout (config.h)
 //
 //  CORE SPLIT
-//    core0 : UI (SH1106 via U8g2) + encoder/buttons + LittleFS storage.
+//    core0 : UI (ST7567S via U8g2) + encoder/buttons + LittleFS storage.
 //    core1 : 96-PPQN transport + event scheduler; the ONLY core that talks
 //            to the MIDI UART.
 //  The cores share the global Song + Engine through atomic byte fields and
