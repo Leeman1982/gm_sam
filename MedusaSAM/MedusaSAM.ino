@@ -47,13 +47,26 @@ void setup() {
 #ifdef LED_BUILTIN
     pinMode(LED_BUILTIN, OUTPUT);
 #endif
+    // Build the default song first so the display and engine have valid data.
     songInitDefault(song);
-    g_songReady = true;
 
-    Storage::begin();          // mount LittleFS (formats on first run)
+    // ── Display FIRST ───────────────────────────────────────────────────────
+    // Bring the panel up before anything that can stall, exactly like the
+    // proven RP2350 build.  If a later step ever hangs, the splash is already
+    // on screen instead of leaving a mysterious blank.
     controls.begin();
-    ui.begin(&song, &engine, &controls);
-    delay(600);                // let the boot splash be seen
+    ui.begin(&song, &engine, &controls);   // splash shows here
+
+    // ── Flash work while core1 is still parked ──────────────────────────────
+    // core1 spin-waits on g_songReady (still false here), so it is NOT
+    // executing engine/UART code from flash while LittleFS mounts/formats.
+    // Formatting flash while the other core runs from XIP is the classic
+    // RP2040 hard-hang; keeping core1 idle here avoids it.
+    Storage::begin();          // mount LittleFS (formats on first run)
+
+    // ── Release core1 only now that all core0 flash work is done ────────────
+    g_songReady = true;
+    delay(400);                // let the boot splash be seen
 }
 
 void loop() {
@@ -71,8 +84,12 @@ void loop() {
 //  CORE 1  --  real-time engine (owns Serial1 / MIDI)
 // ----------------------------------------------------------------------------
 void setup1() {
-    SAM::begin();                       // UART @31250 + GM reset
+    // Wait until core0 has finished the song build, the display init, and the
+    // LittleFS mount/format BEFORE doing anything.  This keeps core1 idle (it
+    // just spin-waits, which the arduino-pico flash lockout parks safely)
+    // during core0's flash work, instead of racing it and hanging the chip.
     while (!g_songReady) { delay(1); }
+    SAM::begin();                       // UART @31250 + GM reset
     engine.begin(&song);                // arms timing + queues a full resend
 }
 
