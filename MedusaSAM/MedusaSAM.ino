@@ -3,10 +3,10 @@
 //  ---------------------------------------------------------------------------
 //  The Medusa GM sequencer + UI, with the baked SoundFont engine replaced by
 //  a Dream SAM2695 General-MIDI module driven over serial MIDI.  Because the
-//  RP2040 only shuttles MIDI bytes, the CPU load is tiny -- the whole of
+//  RP2350 only shuttles MIDI bytes, the CPU load is tiny -- the whole of
 //  core1 belongs to timing, which is why the groove is rock solid.
 //
-//  Hardware:  Raspberry Pi Pico (RP2040)  |  Arduino IDE w/ arduino-pico core
+//  Hardware:  Raspberry Pi Pico 2 (RP2350)  |  Arduino IDE w/ arduino-pico core
 //             SAM2695 GM module (MIDI in @31250)  |  1.3" ST7567S COG LCD
 //             EC11 rotary encoder + 5 buttons     |  Medusa pinout (config.h)
 //
@@ -18,8 +18,8 @@
 //  volatile request flags (see engine.h).
 //
 //  Build (Arduino IDE):
-//    Board:      your Raspberry Pi Pico (RP2040)
-//    Flash Size: a layout WITH a filesystem, e.g. "2MB (Sketch 1MB / FS 1MB)"
+//    Board:      Raspberry Pi Pico 2  (RP2350)
+//    Flash Size: a layout WITH a filesystem, e.g. "4MB (Sketch 3.75MB/FS 256KB)"
 //    Libraries:  U8g2 (Library Manager)
 //  See README.md for wiring and the full manual.
 // ============================================================================

@@ -63,7 +63,7 @@ void patternReset(Pattern& p) {
 
 void songInitDefault(Song& s) {
     // Reset field by field: `s = Song()` would put a ~66 KB temporary on the
-    // stack, far beyond the RP2040's per-core stack.
+    // stack, far beyond the per-core stack.
     for (int pi = 0; pi < NUM_PATTERNS; pi++) patternReset(s.pattern[pi]);
     s.fx        = FxParams();
     s.bpm       = BPM_DEFAULT;

@@ -4,7 +4,7 @@
 //
 //  A 16-track professional MIDI groovebox for the Dream SAM2695 GM module.
 //
-//  Board:   Raspberry Pi Pico (RP2040), arduino-pico core by earlephilhower
+//  Board:   Raspberry Pi Pico 2 (RP2350), arduino-pico core by earlephilhower
 //  Synth:   Dream SAM2695 "GM 2.0 music module" -- serial MIDI @ 31250 baud
 //  Display: 1.3" ST7567S COG LCD, 4-pin I2C (EstarDyn module, U8g2)
 //  Input:   EC11 rotary encoder w/ push + 5 momentary buttons

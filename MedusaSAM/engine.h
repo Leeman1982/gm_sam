@@ -11,7 +11,7 @@
 //                     reads the volatile playhead fields for display.
 //    core1 (engine) : calls begin() once, then service() in a tight loop.
 //                     The ONLY core that touches the MIDI UART.
-//  Shared state is single aligned 8/16-bit scalars -- atomic on the M0+.
+//  Shared state is single aligned 8/16-bit scalars -- atomic on the M33.
 // ============================================================================
 #include <Arduino.h>
 #include "config.h"
@@ -29,9 +29,9 @@ public:
     volatile uint8_t reqResendAll = 0;   // full reconcile (after song load)
     volatile uint8_t reqPattern   = 0xFF;// switch pattern (queued to bar end)
 
-    // ---- flash-safe pause handshake (see storage save/load in ui.cpp) ----
-    volatile uint8_t reqPause = 0;       // core0: please park
-    volatile uint8_t paused   = 0;       // core1: parked (UART idle)
+    // Flash-safe save/load is handled in ui.cpp with the Pico SDK multicore
+    // lockout (it parks this core in a RAM ISR for the flash write), so no
+    // request-flag handshake is needed here.
 
     // ---- engine -> UI state ----
     volatile uint8_t isRunning  = 0;

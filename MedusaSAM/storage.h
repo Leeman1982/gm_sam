@@ -1,7 +1,7 @@
 #pragma once
 // ============================================================================
 //  Medusa SAM  --  storage.h
-//  Persist whole Songs to the RP2040's flash via LittleFS.  core0 only, and
+//  Persist whole Songs to the RP2350's flash via LittleFS.  core0 only, and
 //  ONLY while the engine is parked (see UI save/load): flash writes stall XIP,
 //  so core1 is paused + locked out for the duration.
 //

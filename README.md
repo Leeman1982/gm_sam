@@ -1,9 +1,10 @@
 # Medusa SAM — 16-track MIDI groovebox for the Dream SAM2695
 
 The **Medusa** sequencer and UI, re-targeted at a hardware **Dream SAM2695**
-General-MIDI module. The baked-in SoundFont engine is gone — the RP2040 only
-shuttles MIDI bytes, so the CPU is nearly idle and the whole of core1 is spent
-on timing. That is the point: the groove is rock solid.
+General-MIDI module, on a **Raspberry Pi Pico 2 (RP2350)**. The baked-in
+SoundFont engine is gone — the RP2350 only shuttles MIDI bytes, so the CPU is
+nearly idle and the whole of core1 is spent on timing. That is the point: the
+groove is rock solid.
 
 - **16 tracks**, each with its own MIDI channel, instrument and length
 - **16–64 steps per track** (any length 1–64; polymeter between tracks)
@@ -29,7 +30,7 @@ the `main` branch.)
 
 | Part | Notes |
 |------|-------|
-| Raspberry Pi Pico (RP2040) | any RP2040 board with GP0–GP13 free |
+| Raspberry Pi Pico 2 (RP2350) | GP0–GP13 free; an RP2040 Pico also works (source-compatible) |
 | Dream SAM2695 GM module | the AliExpress "MIDI digital music module, GM 2.0, 128 tones" (Nulllab etc.) with speaker/phones out |
 | 1.3" ST7567S COG LCD, 4-pin I2C (EstarDyn GM12864-59N) | works as-is, no external pull-ups — see the display notes below |
 | EC11 rotary encoder w/ push | often on the same panel as the OLED |
@@ -72,7 +73,7 @@ Audio comes straight off the module's speaker/phones output.
 
 Wire by function, not silkscreen: Pico **GP0 → the shield's "1 / TX" pad**
 (drives MIDI OUT), GP1 → "0 / RX" (future sync-in), and **power the shield
-from 3V3** — the RP2040 is not 5 V-tolerant, and the shield's opto output
+from 3V3** — the RP2350 is not 5 V-tolerant, and the shield's opto output
 idles at its VCC.
 
 ### The ST7567S display (EstarDyn GM12864-59N)
@@ -108,10 +109,13 @@ canvas.
 
 1. Install the **arduino-pico** core (Earle Philhower). Boards Manager URL:
    `https://github.com/earlephilhower/arduino-pico/releases/download/global/package_rp2040_index.json`
+   (this one package covers both the RP2040 and the RP2350/Pico 2).
 2. Install **U8g2** from the Library Manager.
-3. Board: your Raspberry Pi Pico. **Flash Size: pick a layout with a
-   filesystem**, e.g. *2MB (Sketch 1MB / FS 1MB)* — a song slot is ~66 KB and
-   there are 8 of them.
+3. Board: **Raspberry Pi Pico 2** (Tools → Board → "Raspberry Pi Pico 2" /
+   RP2350). **Flash Size: pick a layout with a filesystem**, e.g. *4MB
+   (Sketch 3.75MB / FS 256KB)* — a song slot is ~66 KB and there are 8 of
+   them, so even a small FS partition is plenty. (On an RP2040 Pico use a
+   *2MB (Sketch 1MB / FS 1MB)* layout instead.)
 4. Open `MedusaSAM/MedusaSAM.ino` and upload.
 
 On boot it loads a default groove (kick / snare / hats / bass / piano) —
@@ -209,7 +213,7 @@ per-drum-note NRPNs (18 nn pitch, 1A nn level, 1C nn pan, 1D nn reverb,
 
 ```
 MedusaSAM/
-  MedusaSAM.ino   core0: setup/loop (UI)   core1: setup1/loop1 (engine)
+  MedusaSAM.ino   core0: setup/loop (UI); core1 launched last from setup()
   config.h        pins + dimensions + timing constants
   model.h/.cpp    Song / Pattern / TrackCfg / Step + scales + default song
   sam2695.h/.cpp  the complete SAM2695 MIDI driver (see reference above)
@@ -229,16 +233,20 @@ Ties keep a per-track held note and hand it over ON-before-OFF, so mono/porta
 patches glide (303-style) instead of gapping. MIDI clock (0xF8, 24 PPQN) plus
 Start/Stop/Continue go out with the notes — external gear follows the groove.
 
-**Cross-core rules.** core0 edits the Song and raises volatile request flags;
-core1 diff-reconciles the Song against a shadow every pass and sends only what
-changed, budgeted against the UART FIFO so a big edit can never stall a tick.
-All shared fields are single aligned 8/16-bit scalars — atomic on the M0+, no
-locks anywhere. Song save/load parks the engine (handshake), then locks core1
-out of XIP flash for the write.
+**Cross-core rules.** core0 brings up the display and mounts flash *before*
+core1 exists — core1 is launched last, from the final line of `setup()`
+(`multicore_launch_core1_with_stack`), exactly like the reference RP2350
+build, so nothing races the I2C/flash bring-up. core0 then edits the Song and
+raises volatile request flags; core1 diff-reconciles the Song against a shadow
+every pass and sends only what changed, budgeted against the UART FIFO so a big
+edit can never stall a tick. All shared fields are single aligned 8/16-bit
+scalars — atomic on the M33, no locks anywhere. Song save/load freezes core1 in
+a RAM ISR with the Pico SDK multicore lockout for the duration of the flash
+write.
 
 ## The future baked-synth layer
 
-This firmware is deliberately light on the RP2040 so a second sound source can
+This firmware is deliberately light on the RP2350 so a second sound source can
 live beside the SAM2695 later — the Medusa GM sample engine rendered over I2S
 on the reserved GP15/16/17 pins. The seam is already cut:
 

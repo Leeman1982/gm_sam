@@ -6,7 +6,7 @@
 //
 //  THREADING: the UI (core0) edits these fields, the engine (core1) reads
 //  them.  Every field is a single aligned 8/16-bit scalar, which the
-//  Cortex-M0+ reads/writes atomically, so no locks are needed.
+//  Cortex-M33 reads/writes atomically, so no locks are needed.
 // ============================================================================
 #include <Arduino.h>
 #include "config.h"
@@ -130,7 +130,7 @@ struct FxParams {
     uint8_t _pad        = 0;
 };
 
-// ─── The whole song in RAM (~66 KB -- comfortably inside the RP2040's 264 KB) ─
+// ─── The whole song in RAM (~66 KB -- comfortably inside the RP2350's 520 KB) ─
 struct Song {
     TrackCfg track[NUM_TRACKS];
     Pattern  pattern[NUM_PATTERNS];
@@ -149,7 +149,7 @@ struct Song {
 
 // Reset a pattern in place (steps off, lengths back to 16).  Used instead of
 // `p = Pattern()`: a Pattern is ~8 KB, and a temporary that size would blow
-// the RP2040's per-core stack.
+// the per-core stack.
 void patternReset(Pattern& p);
 
 // Build the default song in place (a playable groove out of the box).

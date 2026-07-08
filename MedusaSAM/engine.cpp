@@ -359,18 +359,10 @@ void Engine::tick() {
 
 // ─── the core1 service loop ──────────────────────────────────────────────────
 void Engine::service() {
-    // flash-safe park: acknowledge, then spin until core0 releases us.  The
-    // UART is idle for the whole window, so LittleFS writes can't collide
-    // with a half-sent MIDI message (core0 additionally locks core1 out of
-    // XIP flash via rp2040.idleOtherCore() during the actual write).
-    if (reqPause) {
-        if (eRunning) stopTransport();
-        paused = 1;
-        while (reqPause) { tight_loop_contents(); }
-        paused = 0;
-        reqResendAll = 1;            // a load may have replaced the whole song
-        return;
-    }
+    // Note: save/load flash safety is handled on core0 (ui.cpp) via the Pico
+    // SDK multicore lockout, which freezes this core in a RAM ISR for the
+    // duration of the write -- nothing to do here.  On resume, a fresh song
+    // may have been loaded, so the resend is requested by the loader.
 
     // one-shot requests
     if (reqPanic)   { reqPanic = 0; flushAllOffs(); }
