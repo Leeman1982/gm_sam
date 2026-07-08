@@ -78,6 +78,13 @@ void setup() {
     Storage::begin();          // mount LittleFS (formats on first run)
 
     // ── Launch core1 LAST ───────────────────────────────────────────────────
+    // Reset core1 to a clean state before taking it over.  The arduino-pico
+    // runtime parks core1 in its own idle FIFO loop at boot; launching an
+    // already-running core1 HANGS the launch call, which would freeze core0
+    // here in setup() -- no loop(), so no buttons, no LED, display stuck on
+    // the splash.  multicore_reset_core1() first is exactly what audio libs
+    // (e.g. AMY in the sibling Medusa GM build) do internally.
+    multicore_reset_core1();
     multicore_launch_core1_with_stack(core1Entry, core1Stack, sizeof(core1Stack));
 
     delay(400);                // let the boot splash be seen
