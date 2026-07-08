@@ -28,26 +28,27 @@
 // ─── 1.3" ST7567S COG LCD (EstarDyn GM12864-59N, 4-pin I2C) over I2C0 ───────
 // The EstarDyn panel: CON SDA SCL PSH TRA TRB BAK GND VCC (4-wire: VCC GND SCL SDA).
 //
-// IMPORTANT -- pull-ups: this module ships with only weak/no pull-ups.  If SDA
-// and SCL idle around ~2.4 V (not ~3.3 V) you are relying on the RP2040's weak
-// internal pull-ups, which are too slow for reliable I2C -> blank screen.  Add
-// real 3k-4.7k pull-ups from SDA and SCL to 3V3.  We also default the bus to
-// 100 kHz (below) so it still works on a marginal bus.
+// These values are taken verbatim from a confirmed-working RP2350 build of
+// this exact panel: ENH_DG128064 profile, address 0x3F, 400 kHz, contrast 220,
+// no external pull-ups needed.  (A multimeter reading ~2.4 V on SDA/SCL is just
+// the meter averaging live I2C traffic while the UI redraws -- it is NORMAL and
+// not a fault.)  See ui.cpp for the exact init order, which also matches.
 #define PIN_OLED_SDA     4
 #define PIN_OLED_SCL     5
 #define OLED_ADDR        0x3F     // GM12864-59N (SA0 high).  U8g2 8-bit addr = 0x3F<<1 = 0x7E
-#define OLED_I2C_HZ      100000   // 100 kHz: robust on weak pull-ups (400k needs strong ones)
+#define OLED_I2C_HZ      400000   // 400 kHz -- confirmed working on this panel
 
-// Panel driver profile.  The GM12864-59N is confirmed working with the U8g2
-// JLX12864 profile at contrast ~160.  If the screen stays BLANK with real
-// pull-ups fitted and the correct address, switch to profile 1 (the ENH
-// DG128064*I* profile) at contrast ~230 -- the other reported-good match for
-// this exact panel.  ui.cpp picks the U8g2 constructor from this.
-#define ST7567_PROFILE   0        // 0 = JLX12864 (default), 1 = ENH_DG128064I
-#if ST7567_PROFILE == 0
-  #define OLED_CONTRAST  160      // JLX12864 profile: tune 150-200 by eye
+// Panel driver profile.  Profile 0 (ENH_DG128064) is the confirmed-working
+// match for this GM12864-59N.  Profiles 1/2 are documented fallbacks in case a
+// different production batch needs them; leave this at 0 unless the screen is
+// blank.  ui.cpp picks the U8g2 constructor from this.
+#define ST7567_PROFILE   0        // 0 = ENH_DG128064 (working), 1 = JLX12864, 2 = ENH_DG128064I
+#if   ST7567_PROFILE == 0
+  #define OLED_CONTRAST  220      // ENH_DG128064: confirmed value; tune 180-240 by eye
+#elif ST7567_PROFILE == 1
+  #define OLED_CONTRAST  160      // JLX12864 fallback: tune 150-200 by eye
 #else
-  #define OLED_CONTRAST  230      // DG128064I profile: tune 200-255 by eye
+  #define OLED_CONTRAST  230      // ENH_DG128064I fallback: tune 200-255 by eye
 #endif
 
 // The ST7567S COG glass on this module physically clips a few pixels at the

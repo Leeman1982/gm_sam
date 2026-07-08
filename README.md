@@ -31,7 +31,7 @@ the `main` branch.)
 |------|-------|
 | Raspberry Pi Pico (RP2040) | any RP2040 board with GP0–GP13 free |
 | Dream SAM2695 GM module | the AliExpress "MIDI digital music module, GM 2.0, 128 tones" (Nulllab etc.) with speaker/phones out |
-| 1.3" ST7567S COG LCD, 4-pin I2C (EstarDyn GM12864-59N) | needs 3k–4.7k I2C pull-ups added — see the display notes below |
+| 1.3" ST7567S COG LCD, 4-pin I2C (EstarDyn GM12864-59N) | works as-is, no external pull-ups — see the display notes below |
 | EC11 rotary encoder w/ push | often on the same panel as the OLED |
 | 5× momentary buttons | PLAY, SHIFT, PAGE, TRACK, REC |
 | *(optional)* DIN-5 MIDI shield | for driving other gear from the same MIDI stream |
@@ -77,29 +77,27 @@ idles at its VCC.
 
 ### The ST7567S display (EstarDyn GM12864-59N)
 
-Wired like any 4-pin I2C panel (VCC / GND / SCL / SDA), but this specific
-COG LCD has several gotchas that differ from a plain SH1106/SSD1306 OLED —
-all handled in `config.h`:
+Wired like any 4-pin I2C panel (VCC / GND / SCL / SDA). The settings below
+are taken **verbatim from a confirmed-working RP2350 build of this exact
+panel** (no external pull-ups needed) and live in `config.h`:
 
-- **Add real pull-ups.** This module ships with only weak/no I2C pull-ups.
-  If you probe SDA and SCL and they idle around **~2.4 V instead of ~3.3 V**,
-  you're relying on the RP2040's weak internal pull-ups — too slow for
-  reliable I2C, and the screen stays **blank**. Fit **3k–4.7k resistors from
-  SDA→3V3 and SCL→3V3**. The firmware also defaults the bus to **100 kHz**
-  (`OLED_I2C_HZ`) so it still works on a marginal bus; raise it to 400 kHz
-  once you have strong pull-ups.
-- **Driver profile.** The GM12864-59N needs U8g2's **JLX12864** ST7567
-  profile (`ST7567_PROFILE 0`, the default). The generic `DG128064` profile
-  sends valid I2C but never powers the panel bias, so it looks dead. If the
-  screen is still blank *with* pull-ups fitted and the address correct, set
-  **`ST7567_PROFILE 1`** in `config.h` (the `ENH_DG128064I` profile, the
-  other reported-good match for this panel) and re-flash.
+- **Driver profile.** The GM12864-59N works with U8g2's **`ENH_DG128064`**
+  ST7567 profile (`ST7567_PROFILE 0`, the default) at **contrast 220**. Leave
+  this alone — it is the proven driver for this module. Profiles 1 (`JLX12864`)
+  and 2 (`ENH_DG128064I`) are documented fallbacks only in case a different
+  production batch needs them.
 - **I2C address is `0x3F`**, not `0x3C` — SA0 is pulled high (U8g2's 8-bit
   form is `0x3F << 1 = 0x7E`). Change `OLED_ADDR` to `0x3C` only if your
   board's SA0 is low.
-- **Contrast is set explicitly** (`OLED_CONTRAST`, auto-selected per profile:
-  ~160 for JLX12864, ~230 for DG128064I) — the ST7567S resets far dimmer than
-  an OLED and reads blank until contrast is raised. Tune by eye if needed.
+- **Init order matters.** `ui.cpp` sets `Wire.setSDA/SCL/setClock(400000)`,
+  then the address, then `u8g2.begin()` — and deliberately does **not** call
+  `Wire.begin()` or a post-`begin()` `setBusClock()`. Adding either is what
+  left the panel blank in an earlier revision.
+- **Contrast is set explicitly** after `begin()` (`OLED_CONTRAST`, 220 for the
+  default profile) — the ST7567S resets far dimmer than an OLED and reads blank
+  until contrast is raised. Tune by eye if your panel looks too dark/washed.
+- A multimeter reading **~2.4 V on SDA/SCL is normal**, not a fault — it's the
+  meter averaging the live I2C traffic while the UI redraws.
 
 The COG glass also clips a few pixels at the left edge and garbles the
 rightmost columns, so the firmware confines all drawing to a safe zone
