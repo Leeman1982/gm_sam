@@ -6,8 +6,15 @@
 #include <U8g2lib.h>
 #include <Wire.h>
 
-// 1.3" ST7567S COG LCD (EstarDyn 4-pin I2C module), hardware I2C, full frame buffer.
-static U8G2_ST7567_ENH_DG128064_F_HW_I2C oled(U8G2_R0, U8X8_PIN_NONE);
+// 1.3" ST7567S COG LCD (EstarDyn GM12864-59N), hardware I2C, full frame buffer.
+// The U8g2 driver profile is selected by ST7567_PROFILE in config.h -- the
+// GM12864-59N needs the JLX12864 profile (not the plain DG128064 one, which
+// sends valid I2C but never powers the panel bias -> permanently blank).
+#if ST7567_PROFILE == 0
+static U8G2_ST7567_JLX12864_F_HW_I2C      oled(U8G2_R0, U8X8_PIN_NONE);
+#else
+static U8G2_ST7567_ENH_DG128064I_F_HW_I2C oled(U8G2_R0, U8X8_PIN_NONE);
+#endif
 
 static inline int clampi(int v, int lo, int hi) {
     return v < lo ? lo : (v > hi ? hi : v);

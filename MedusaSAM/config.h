@@ -25,15 +25,30 @@
 #define PIN_MIDI_RX      1        // reserved: external MIDI clock in
 #define MIDI_BAUD        31250
 
-// ─── 1.3" ST7567S COG LCD (EstarDyn 4-pin I2C module) over hardware I2C0 ────
-// The common encoder+OLED-style panel: CON SDA SCL PSH TRA TRB BAK GND VCC.
-// Add 2.2k-4.7k pull-ups on SDA/SCL if your module does not include them.
+// ─── 1.3" ST7567S COG LCD (EstarDyn GM12864-59N, 4-pin I2C) over I2C0 ───────
+// The EstarDyn panel: CON SDA SCL PSH TRA TRB BAK GND VCC (4-wire: VCC GND SCL SDA).
+//
+// IMPORTANT -- pull-ups: this module ships with only weak/no pull-ups.  If SDA
+// and SCL idle around ~2.4 V (not ~3.3 V) you are relying on the RP2040's weak
+// internal pull-ups, which are too slow for reliable I2C -> blank screen.  Add
+// real 3k-4.7k pull-ups from SDA and SCL to 3V3.  We also default the bus to
+// 100 kHz (below) so it still works on a marginal bus.
 #define PIN_OLED_SDA     4
 #define PIN_OLED_SCL     5
-#define OLED_ADDR        0x3F     // EstarDyn module (SA0 pulled high); 0x3C if SA0 is low
-#define OLED_I2C_HZ      400000
-#define OLED_CONTRAST    160      // ST7567S needs far more contrast than SH1106 (0..255);
-                                   // 160 is a confirmed-working value, tune 150-220 by eye
+#define OLED_ADDR        0x3F     // GM12864-59N (SA0 high).  U8g2 8-bit addr = 0x3F<<1 = 0x7E
+#define OLED_I2C_HZ      100000   // 100 kHz: robust on weak pull-ups (400k needs strong ones)
+
+// Panel driver profile.  The GM12864-59N is confirmed working with the U8g2
+// JLX12864 profile at contrast ~160.  If the screen stays BLANK with real
+// pull-ups fitted and the correct address, switch to profile 1 (the ENH
+// DG128064*I* profile) at contrast ~230 -- the other reported-good match for
+// this exact panel.  ui.cpp picks the U8g2 constructor from this.
+#define ST7567_PROFILE   0        // 0 = JLX12864 (default), 1 = ENH_DG128064I
+#if ST7567_PROFILE == 0
+  #define OLED_CONTRAST  160      // JLX12864 profile: tune 150-200 by eye
+#else
+  #define OLED_CONTRAST  230      // DG128064I profile: tune 200-255 by eye
+#endif
 
 // The ST7567S COG glass on this module physically clips a few pixels at the
 // left edge and produces garbled pixels in the rightmost columns.  All
