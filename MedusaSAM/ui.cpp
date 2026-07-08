@@ -5,6 +5,7 @@
 #include "gm_names.h"
 #include <U8g2lib.h>
 #include <Wire.h>
+#include <pico/multicore.h>
 
 // 1.3" ST7567S COG LCD (EstarDyn GM12864-59N), hardware I2C, full frame buffer.
 // The U8g2 driver profile is selected by ST7567_PROFILE in config.h.  Profile 0
@@ -112,19 +113,19 @@ void UI::audition() {
     _eng->audReq = 1;
 }
 
-// ─── save / load (engine parked + core1 locked out of flash) ────────────────
+// ─── save / load (core1 locked out of flash via the SDK) ────────────────────
+// core1 is launched manually (see MedusaSAM.ino), so arduino-pico's
+// rp2040.idleOtherCore() is NOT available -- it needs the loop1() machinery.
+// Instead we use the Pico SDK multicore lockout, which parks core1 in a
+// RAM-resident IRQ handler for the duration of the flash write.  core1 calls
+// multicore_lockout_victim_init() in core1Entry so this works.
 void UI::saveLoad(bool load) {
-    _eng->reqStop  = 1;
-    _eng->reqPause = 1;
-    uint32_t t0 = millis();
-    while (!_eng->paused && millis() - t0 < 1000) { delay(1); }
-    bool ok = false;
-    if (_eng->paused) {
-        rp2040.idleOtherCore();
-        ok = load ? Storage::load(_slot, *_song) : Storage::save(_slot, *_song);
-        rp2040.resumeOtherCore();
-    }
-    _eng->reqPause = 0;          // engine resumes and queues a full resend
+    _eng->reqStop = 1;                    // stop transport + flush note-offs
+    delay(6);                             // let core1 act on the stop first
+    multicore_lockout_start_blocking();   // park core1 (safe during flash op)
+    bool ok = load ? Storage::load(_slot, *_song) : Storage::save(_slot, *_song);
+    multicore_lockout_end_blocking();     // resume core1
+    if (load) _eng->reqResendAll = 1;     // push the loaded song to the SAM
     if (load) toast(ok ? "loaded" : "empty slot");
     else      toast(ok ? "saved" : "save fail");
 }

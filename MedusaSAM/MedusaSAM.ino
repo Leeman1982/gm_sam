@@ -24,6 +24,7 @@
 //  See README.md for wiring and the full manual.
 // ============================================================================
 #include <Arduino.h>
+#include <pico/multicore.h>
 #include "config.h"
 #include "model.h"
 #include "sam2695.h"
@@ -37,8 +38,23 @@ Engine   engine;
 Controls controls;
 UI       ui;
 
-// core1 must not run the engine until core0 has built the song.
-static volatile bool g_songReady = false;
+// Dedicated 8 KB stack for core1 (matches the proven RP2350 build).  core1 is
+// launched MANUALLY at the very end of setup() -- NOT via setup1()/loop1() --
+// so it stays completely idle while core0 brings up the display and touches
+// flash.  Booting core1 concurrently (the setup1/loop1 model) races core0's
+// hardware init and hangs the chip before the panel ever comes up.
+static uint32_t core1Stack[2048];
+
+// ----------------------------------------------------------------------------
+//  CORE 1  --  real-time engine (owns Serial1 / MIDI).  Entered only once,
+//  from the last line of core0's setup(), after all core0 init is done.
+// ----------------------------------------------------------------------------
+static void core1Entry() {
+    SAM::begin();                       // UART @31250 + GM reset
+    multicore_lockout_victim_init();    // lets core0 park us for flash writes
+    engine.begin(&song);                // arms timing + queues a full resend
+    for (;;) engine.service();          // tight real-time loop, never blocks
+}
 
 // ----------------------------------------------------------------------------
 //  CORE 0  --  user interface
@@ -51,21 +67,19 @@ void setup() {
     songInitDefault(song);
 
     // ── Display FIRST ───────────────────────────────────────────────────────
-    // Bring the panel up before anything that can stall, exactly like the
-    // proven RP2350 build.  If a later step ever hangs, the splash is already
-    // on screen instead of leaving a mysterious blank.
+    // Bring the panel up before anything else, exactly like the proven RP2350
+    // build: core1 is not running yet, so nothing can race the I2C bring-up.
     controls.begin();
     ui.begin(&song, &engine, &controls);   // splash shows here
 
-    // ── Flash work while core1 is still parked ──────────────────────────────
-    // core1 spin-waits on g_songReady (still false here), so it is NOT
-    // executing engine/UART code from flash while LittleFS mounts/formats.
-    // Formatting flash while the other core runs from XIP is the classic
-    // RP2040 hard-hang; keeping core1 idle here avoids it.
+    // ── Flash work while core1 does not yet exist ───────────────────────────
+    // Storage runs before core1 is launched, so there is zero chance of core0
+    // formatting flash while core1 executes from XIP (the classic hard-hang).
     Storage::begin();          // mount LittleFS (formats on first run)
 
-    // ── Release core1 only now that all core0 flash work is done ────────────
-    g_songReady = true;
+    // ── Launch core1 LAST ───────────────────────────────────────────────────
+    multicore_launch_core1_with_stack(core1Entry, core1Stack, sizeof(core1Stack));
+
     delay(400);                // let the boot splash be seen
 }
 
@@ -75,24 +89,7 @@ void loop() {
     ui.render();               // self-throttled to ~25 fps
 
 #ifdef LED_BUILTIN
-    // 1 Hz heartbeat: proves core0 is alive even with a dead OLED.
+    // 1 Hz heartbeat: proves core0 reached loop() (not hung in setup()).
     digitalWrite(LED_BUILTIN, (millis() % 1000) < 500 ? HIGH : LOW);
 #endif
-}
-
-// ----------------------------------------------------------------------------
-//  CORE 1  --  real-time engine (owns Serial1 / MIDI)
-// ----------------------------------------------------------------------------
-void setup1() {
-    // Wait until core0 has finished the song build, the display init, and the
-    // LittleFS mount/format BEFORE doing anything.  This keeps core1 idle (it
-    // just spin-waits, which the arduino-pico flash lockout parks safely)
-    // during core0's flash work, instead of racing it and hanging the chip.
-    while (!g_songReady) { delay(1); }
-    SAM::begin();                       // UART @31250 + GM reset
-    engine.begin(&song);                // arms timing + queues a full resend
-}
-
-void loop1() {
-    engine.service();                   // tight real-time loop, never blocks
 }
