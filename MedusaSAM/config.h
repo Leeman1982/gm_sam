@@ -74,6 +74,12 @@
 #define DEBOUNCE_MS      5
 #define LONG_PRESS_MS  600
 
+// Temporary on-screen input monitor.  With this at 1, the bottom two lines of
+// every screen show a live readout of the raw button pins, the debounced
+// button states, the encoder count, and a frame counter -- so you can SEE
+// exactly what the hardware is doing.  Set back to 0 once inputs are verified.
+#define DEBUG_INPUT      1
+
 // ─── Reserved pins (future expansion -- do not reuse) ───────────────────────
 // GP14        : analog click/gate out for syncing modular gear
 // GP15/16/17  : I2S BCLK/LRCLK/DIN to a PCM5102 DAC -- this is where the

@@ -713,5 +713,31 @@ void UI::render() {
         oled.drawStr(bx + 3, 36, _toast);
     } else if (_toast[0] && now >= _toastUntil) _toast[0] = 0;
 
+#if DEBUG_INPUT
+    // ── Live input monitor (temporary; DEBUG_INPUT in config.h) ─────────────
+    // Reads the button pins DIRECTLY (bypassing the debounce layer) so we can
+    // see the raw hardware.  Active-low: a wired, working button shows 1 when
+    // released and 0 when you press it.  If a digit never changes on press,
+    // that pin/switch isn't reaching the RP2350 -> wiring, not code.
+    //   B: PLAY SHIFT PAGE TRACK REC ENC_SW  (raw pin, 1=up 0=pressed)
+    //   H: the 5 buttons as the debounced layer sees them (1=held)
+    //   E: encoder quadrature count   F: frame counter (ticks = loop is alive)
+    static uint32_t dbgFrame = 0;
+    dbgFrame++;
+    char db[34];
+    int rB = digitalRead(PIN_BTN_PLAY),  rS = digitalRead(PIN_BTN_SHIFT);
+    int rG = digitalRead(PIN_BTN_PAGE),  rT = digitalRead(PIN_BTN_TRACK);
+    int rR = digitalRead(PIN_BTN_REC),   rE = digitalRead(PIN_ENC_SW);
+    oled.setDrawColor(0); oled.drawBox(0, 50, 128, 14); oled.setDrawColor(1);
+    oled.setFont(u8g2_font_4x6_tr);
+    snprintf(db, sizeof(db), "B%d%d%d%d%d%d H%d%d%d%d%d", rB, rS, rG, rT, rR, rE,
+             _ctl->play.isHeld(), _ctl->shift.isHeld(), _ctl->page.isHeld(),
+             _ctl->track.isHeld(), _ctl->rec.isHeld());
+    oled.drawStr(SCREEN_L, 57, db);
+    snprintf(db, sizeof(db), "E%d F%lu", _ctl->encoder.rawCount(),
+             (unsigned long)dbgFrame);
+    oled.drawStr(SCREEN_L, 63, db);
+#endif
+
     oled.sendBuffer();
 }

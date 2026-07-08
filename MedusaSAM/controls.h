@@ -16,6 +16,7 @@ public:
     bool wasPressed();          // short press (consumed on read)
     bool wasLongPress();        // long press (consumed on read)
     bool isHeld();
+    int  rawCount() const { return (int)_count; }   // debug: raw quadrature count
 
 private:
     static void isrTrampoline();
