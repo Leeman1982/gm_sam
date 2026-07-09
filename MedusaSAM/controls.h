@@ -1,11 +1,18 @@
 #pragma once
 // ============================================================================
 //  Medusa SAM  --  controls.h
-//  Rotary encoder (ISR quadrature decode + debounced push) and momentary
-//  buttons with short / long-press detection.  core0 only.
+//  Rotary encoder (POLLED quadrature decode) and debounced momentary buttons
+//  with short / long-press detection.  core0 only.
 //
-//  This is the SAME proven encoder + button implementation as the working
-//  Medusa GM build -- do not "improve" it.
+//  The encoder was originally interrupt-driven (attachInterrupt/CHANGE on
+//  A+B), matching the sibling Medusa GM build.  On this board that froze the
+//  whole chip after ~1s of active rotation -- almost certainly arduino-pico's
+//  shared GPIO-IRQ dispatch choking on the edge burst a mechanical encoder
+//  throws off under contact bounce (a documented soft spot in that core).
+//  Polling sidesteps that subsystem entirely: update() is called every
+//  loop() iteration (far faster than a human can turn the knob) and reads
+//  A/B directly, exactly like the on-screen diagnostic that already proved
+//  this is rock solid on this hardware.
 // ============================================================================
 #include <Arduino.h>
 #include "config.h"
@@ -15,19 +22,18 @@ public:
     RotaryEncoder(uint8_t pinA, uint8_t pinB, uint8_t pinSW);
     void begin();
     int  getDelta();            // detents since last call (signed)
-    void update();              // poll push switch (call from loop)
+    void update();              // poll A/B quadrature + push switch (call from loop)
     bool wasPressed();          // short press (consumed)
     bool wasLongPress();        // long press (consumed)
     bool isHeld();
     int  rawCount() const { return _count; }   // debug: raw quadrature count
 
-    static void isrA();
-    static void isrB();
-
 private:
     uint8_t _pinA, _pinB, _pinSW;
-    volatile int _count = 0;
-    volatile uint8_t _last = 0;
+    // No longer touched from interrupt context, so no volatile/critical
+    // section is needed -- update()/getDelta() are both core0, both loop().
+    int     _count = 0;
+    uint8_t _last  = 0;
     // push switch state
     bool _swRaw = false, _swState = false, _longFired = false;
     bool _pressedFlag = false, _longFlag = false;

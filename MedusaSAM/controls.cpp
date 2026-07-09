@@ -1,49 +1,40 @@
 #include "controls.h"
 
 // ─── RotaryEncoder ──────────────────────────────────────────────────────────
-// arduino-pico ISRs are void(*)() with no argument; use a static instance ptr.
-// This is the exact decode used in the working Medusa GM build.
-static RotaryEncoder* _encInstance = nullptr;
-
+// POLLED quadrature decode -- see controls.h for why this replaced the
+// original attachInterrupt/CHANGE version (it froze the chip on rotation).
 RotaryEncoder::RotaryEncoder(uint8_t pinA, uint8_t pinB, uint8_t pinSW)
     : _pinA(pinA), _pinB(pinB), _pinSW(pinSW) {}
 
 void RotaryEncoder::begin() {
-    _encInstance = this;
     pinMode(_pinA, INPUT_PULLUP);
     pinMode(_pinB, INPUT_PULLUP);
     pinMode(_pinSW, INPUT_PULLUP);
-    _last = (digitalRead(_pinA) << 1) | digitalRead(_pinB);
-    attachInterrupt(digitalPinToInterrupt(_pinA), isrA, CHANGE);
-    attachInterrupt(digitalPinToInterrupt(_pinB), isrB, CHANGE);
+    _last = (uint8_t)((digitalRead(_pinA) << 1) | digitalRead(_pinB));
 }
-
-void RotaryEncoder::isrA() {
-    RotaryEncoder* e = _encInstance;
-    if (!e) return;
-    uint8_t a = digitalRead(e->_pinA);
-    uint8_t b = digitalRead(e->_pinB);
-    uint8_t s = (a << 1) | b;
-    if (s != e->_last) {
-        if ((e->_last == 0b11 && s == 0b01) || (e->_last == 0b01 && s == 0b00) ||
-            (e->_last == 0b00 && s == 0b10) || (e->_last == 0b10 && s == 0b11))
-            e->_count++;
-        else
-            e->_count--;
-        e->_last = s;
-    }
-}
-void RotaryEncoder::isrB() { isrA(); }
 
 int RotaryEncoder::getDelta() {
-    noInterrupts();
     int d = _count / ENC_TICKS_PER_DETENT;
     _count -= d * ENC_TICKS_PER_DETENT;
-    interrupts();
     return d;
 }
 
 void RotaryEncoder::update() {
+    // Full quadrature transition table: index = (prev<<2)|curr, +1/-1/0.
+    // Same table the old ISR used; "invalid" (skipped-a-step) transitions
+    // decode to 0 rather than guessing a direction, so a missed poll (e.g.
+    // during a display I2C write) costs at most a lost click, never a wrong
+    // direction or a runaway count.
+    static const int8_t kTable[16] =
+        { 0,-1, 1, 0,  1, 0, 0,-1,  -1, 0, 0, 1,  0, 1,-1, 0 };
+    uint8_t s = (uint8_t)((digitalRead(_pinA) << 1) | digitalRead(_pinB));
+    if (s != _last) {
+        uint8_t idx = (uint8_t)(((_last << 2) | s) & 0x0F);
+        _count += kTable[idx];
+        _last = s;
+    }
+
+    // push switch (unchanged: plain debounce, polled)
     bool raw = (digitalRead(_pinSW) == LOW);
     unsigned long now = millis();
     if (raw != _swRaw) { _swDebounceT = now; _swRaw = raw; }

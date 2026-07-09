@@ -715,19 +715,17 @@ void UI::render() {
 
 #if DEBUG_INPUT
     // ── Live input monitor (temporary; DEBUG_INPUT in config.h) ─────────────
-    // Reads pins DIRECTLY (bypassing debounce AND bypassing the interrupt/ISR
-    // path for the encoder) so hardware and software are visible separately.
+    // Reads pins DIRECTLY (bypassing debounce) so hardware and software are
+    // visible separately.  The encoder is now polled (see controls.cpp), so
+    // this is mainly a sanity check that rotation is still being seen and
+    // isn't freezing anything.
     //   B: PLAY SHIFT PAGE TRACK REC ENC_SW  (raw pin, 1=up 0=pressed)
     //   H: the 5 buttons as the debounced layer sees them (1=held)
-    //   A/b: encoder A/B raw level right now, POLLED every frame -- this has
-    //        nothing to do with attachInterrupt.  Turn the knob and watch Ta/Tb.
-    //   Ta/Tb: how many times A/B has FLIPPED since boot, counted by this
-    //        polling loop (NOT the ISR).  If Ta/Tb climb while you turn the
-    //        knob, the GPIOs are physically toggling -- hardware/wiring is
-    //        fine and the bug is the interrupt not firing.  If Ta/Tb stay at
-    //        0 while turning, the pins themselves aren't changing -> wiring.
-    //   E: the ISR-decoded quadrature count.  Compare against Ta/Tb: if Ta/Tb
-    //        move but E never does, attachInterrupt isn't registering hits.
+    //   A/b: encoder A/B raw level right now, polled independently of the
+    //        RotaryEncoder class's own polling, as an extra cross-check.
+    //   Ta/Tb: how many times A/B has flipped since boot, per THIS loop.
+    //   E: RotaryEncoder's own decoded quadrature count -- should track Ta/Tb
+    //        (roughly Ta+Tb per detent) as you turn the knob.
     //   F: frame counter (ticks = loop is alive)
     static uint32_t dbgFrame = 0;
     static int8_t prevA = -1, prevB = -1;
