@@ -715,24 +715,39 @@ void UI::render() {
 
 #if DEBUG_INPUT
     // ── Live input monitor (temporary; DEBUG_INPUT in config.h) ─────────────
-    // Reads the button pins DIRECTLY (bypassing the debounce layer) so we can
-    // see the raw hardware.  Active-low: a wired, working button shows 1 when
-    // released and 0 when you press it.  If a digit never changes on press,
-    // that pin/switch isn't reaching the RP2350 -> wiring, not code.
+    // Reads pins DIRECTLY (bypassing debounce AND bypassing the interrupt/ISR
+    // path for the encoder) so hardware and software are visible separately.
     //   B: PLAY SHIFT PAGE TRACK REC ENC_SW  (raw pin, 1=up 0=pressed)
     //   H: the 5 buttons as the debounced layer sees them (1=held)
-    //   E: encoder quadrature count   F: frame counter (ticks = loop is alive)
+    //   A/b: encoder A/B raw level right now, POLLED every frame -- this has
+    //        nothing to do with attachInterrupt.  Turn the knob and watch Ta/Tb.
+    //   Ta/Tb: how many times A/B has FLIPPED since boot, counted by this
+    //        polling loop (NOT the ISR).  If Ta/Tb climb while you turn the
+    //        knob, the GPIOs are physically toggling -- hardware/wiring is
+    //        fine and the bug is the interrupt not firing.  If Ta/Tb stay at
+    //        0 while turning, the pins themselves aren't changing -> wiring.
+    //   E: the ISR-decoded quadrature count.  Compare against Ta/Tb: if Ta/Tb
+    //        move but E never does, attachInterrupt isn't registering hits.
+    //   F: frame counter (ticks = loop is alive)
     static uint32_t dbgFrame = 0;
+    static int8_t prevA = -1, prevB = -1;
+    static uint16_t toggleA = 0, toggleB = 0;
     dbgFrame++;
-    char db[34];
+    char db[36];
     int rB = digitalRead(PIN_BTN_PLAY),  rS = digitalRead(PIN_BTN_SHIFT);
     int rG = digitalRead(PIN_BTN_PAGE),  rT = digitalRead(PIN_BTN_TRACK);
     int rR = digitalRead(PIN_BTN_REC),   rE = digitalRead(PIN_ENC_SW);
-    oled.setDrawColor(0); oled.drawBox(0, 50, 128, 14); oled.setDrawColor(1);
+    int rA = digitalRead(PIN_ENC_A),     rBb = digitalRead(PIN_ENC_B);
+    if (prevA >= 0 && rA  != prevA) toggleA++;
+    if (prevB >= 0 && rBb != prevB) toggleB++;
+    prevA = (int8_t)rA; prevB = (int8_t)rBb;
+    oled.setDrawColor(0); oled.drawBox(0, 44, 128, 20); oled.setDrawColor(1);
     oled.setFont(u8g2_font_4x6_tr);
     snprintf(db, sizeof(db), "B%d%d%d%d%d%d H%d%d%d%d%d", rB, rS, rG, rT, rR, rE,
              _ctl->play.isHeld(), _ctl->shift.isHeld(), _ctl->page.isHeld(),
              _ctl->track.isHeld(), _ctl->rec.isHeld());
+    oled.drawStr(SCREEN_L, 51, db);
+    snprintf(db, sizeof(db), "A%d,%d Ta%u Tb%u", rA, rBb, toggleA, toggleB);
     oled.drawStr(SCREEN_L, 57, db);
     snprintf(db, sizeof(db), "E%d F%lu", _ctl->encoder.rawCount(),
              (unsigned long)dbgFrame);
