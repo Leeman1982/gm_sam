@@ -1,154 +1,260 @@
-# GM Sequencer — RP2040 + Dream SAM2695
+# Medusa SAM — 16-track MIDI groovebox for the Dream SAM2695
 
-A professional dual-core MIDI step sequencer for the Raspberry Pi Pico (RP2040)
-that drives a Dream **SAM2695** General-MIDI module (the AliExpress "GM 2.0
-synthesis module"). 16 tracks, 64 steps, per-step micro-timing/probability,
-rock-solid drift-free timing, and a clear SH1106 OLED UI.
+The **Medusa** sequencer and UI, re-targeted at a hardware **Dream SAM2695**
+General-MIDI module, on a **Raspberry Pi Pico 2 (RP2350)**. The baked-in
+SoundFont engine is gone — the RP2350 only shuttles MIDI bytes, so the CPU is
+nearly idle and the whole of core1 is spent on timing. That is the point: the
+groove is rock solid.
 
-The SAM2695 is a 64-voice GM/GS/MT-32 synth-on-a-chip with onboard reverb +
-chorus and a 4-band EQ, controlled over standard serial MIDI at 31250 baud.
-This firmware exposes that feature set: per-track instrument/bank, volume, pan,
-reverb & chorus sends, global reverb/chorus types and master volume, plus a GM
-reset.
+- **16 tracks**, each with its own MIDI channel, instrument and length
+- **16–64 steps per track** (any length 1–64; polymeter between tracks)
+- **8 patterns**, chainable into a song (up to 16 chain entries)
+- Per step: **note, velocity, gate, probability, micro-timing, ratchet (1–4),
+  accent, tie/slide**
+- Per pattern: **bar length + swing**; global **scale lock** (7 scales)
+- **Every SAM2695 parameter** — including the hidden NRPN / GS SysEx set — is
+  reachable from the front panel (see the parameter reference below)
+- **Dual-core**: core0 = UI, core1 = a drift-free 96-PPQN engine that owns the
+  MIDI UART
+- 8 song slots on the Pico's flash (LittleFS)
+- A routing hook + reserved I2S pins for a future onboard ("baked")
+  synth/SoundFont layer
 
----
-
-## Architecture
-
-Two cores, no locks in the audio path:
-
-- **core1 — engine.** Owns all timing and is the *only* core that touches the
-  MIDI UART. Internal resolution is **96 PPQN** with a drift-free integer tick
-  accumulator (no floats in the hot loop). Emits MIDI clock (0xF8) on the
-  24-PPQN grid plus Start/Stop/Continue — the foundation for future external
-  sync. An event scheduler handles note on/off with swing and per-step micro
-  offsets (offs fire before ons at the same tick).
-- **core0 — UI.** SH1106 rendering (~30 fps), encoder + buttons, and LittleFS
-  song storage.
-
-Cross-core sharing uses single aligned 8/16-bit scalars (atomic on the M0+) and
-volatile request flags. Setting changes are reconciled to MIDI each engine pass,
-so edits are audible immediately.
+The firmware lives in [`MedusaSAM/`](MedusaSAM/) — open `MedusaSAM.ino` in the
+Arduino IDE. (The previous-generation sequencer this repo used to hold is on
+the `main` branch.)
 
 ---
 
-## Wiring
+## Hardware
 
-All buttons and the encoder are **active-low** with internal pull-ups — wire the
-common side to **GND**.
+| Part | Notes |
+|------|-------|
+| Raspberry Pi Pico 2 (RP2350) | GP0–GP13 free; an RP2040 Pico also works (source-compatible) |
+| Dream SAM2695 GM module | the AliExpress "MIDI digital music module, GM 2.0, 128 tones" (Nulllab etc.) with speaker/phones out |
+| 1.3" ST7567S COG LCD, 4-pin I2C (EstarDyn GM12864-59N) | works as-is, no external pull-ups — see the display notes below |
+| EC11 rotary encoder w/ push | often on the same panel as the OLED |
+| 5× momentary buttons | PLAY, SHIFT, PAGE, TRACK, REC |
+| *(optional)* DIN-5 MIDI shield | for driving other gear from the same MIDI stream |
 
-| Signal            | Pico pin | Notes                                        |
-|-------------------|----------|----------------------------------------------|
-| MIDI TX → module  | GP0      | UART0 TX to the SAM2695 MIDI-IN / RX pad     |
-| MIDI RX (future)  | GP1      | reserved for external clock-sync input       |
-| OLED SDA          | GP4      | I2C0                                          |
-| OLED SCL          | GP5      | I2C0, 400 kHz                                 |
-| Encoder A         | GP6      | quadrature (interrupt-driven)                 |
-| Encoder B         | GP7      | quadrature                                    |
-| Encoder switch    | GP8      | push                                          |
-| PLAY button       | GP9      | start/stop (SHIFT = from top)                 |
-| SHIFT button      | GP10     | modifier (hold)                               |
-| PAGE button       | GP11     | next page (SHIFT = previous)                  |
-| TRACK button      | GP12     | next track (SHIFT = prev, long = clear)       |
-| MUTE button       | GP13     | mute (SHIFT = solo)                           |
-| CLICK OUT (future)| GP14     | reserved analog gate-sync pulse               |
+## Wiring (the Medusa pinout)
 
-Power the SAM2695 and OLED per their own requirements; share a common ground
-with the Pico. Add a series resistor on the MIDI line per the module's docs if
-it expects an opto-isolated/standard MIDI input.
+This is the **same front-panel map as Medusa GM** — the OLED, encoder and all
+five buttons land on the same GPIOs, so one panel build drives either
+firmware. All buttons and the encoder are **active-low**: wire their common
+side to **GND** (internal pull-ups are enabled in firmware).
 
-### Using an Arduino-style MIDI shield (DIN-5 IN/OUT/THRU)
+| Signal | Pico pin | Notes |
+|--------|----------|-------|
+| MIDI TX → SAM2695 | **GP0** | to the module's MIDI-IN / RX pad (3.3 V TTL, direct) |
+| MIDI RX (future) | GP1 | reserved for external clock sync — never above 3.3 V |
+| LCD SDA | GP4 | I2C0 |
+| LCD SCL | GP5 | I2C0 @ 400 kHz |
+| Encoder A / B / push | GP6 / GP7 / GP8 | |
+| PLAY | GP9 | |
+| SHIFT | GP10 | modifier (hold) |
+| PAGE | GP11 | |
+| TRACK | GP12 | |
+| REC | GP13 | context button (accent / edit / audition / execute) |
+| click-out (future) | GP14 | reserved |
+| I2S BCLK/LRCLK/DIN (future) | GP15/16/17 | reserved for the baked-synth layer's DAC |
 
-A generic opto-isolated MIDI shield gives you proper DIN-5 sockets; drive the
-SAM2695 from its MIDI OUT. Wire it by **function**, not by the silkscreen pin
-number — these shields use the Arduino convention where pad 0 = RX and pad 1 =
-TX, and MIDI OUT is driven by the TX (D1) pad:
+### The SAM2695 module (3-pin PH2.0 "MIDI" connector)
 
-| Pico pin     | Shield pad            | Why                                  |
-|--------------|-----------------------|--------------------------------------|
-| GP0 (TX)     | "1 / TX" pad          | drives MIDI OUT (→ SAM2695 MIDI IN)  |
-| GP1 (RX)     | "0 / RX" pad          | opto output (future clock sync-in)   |
-| 3V3          | shield 3V3 / VCC pad  | see warning below                    |
-| GND          | shield GND            | common ground                        |
+| Module pin | Connect to |
+|------------|------------|
+| MIDI (RX)  | Pico **GP0** |
+| VCC        | 5 V (VBUS) or 3V3 per your module's spec |
+| GND        | Pico GND (common ground is essential) |
 
-**Power the shield from 3V3, not 5V.** The RP2040 is *not* 5V-tolerant. The
-shield's MIDI-IN opto output idles at the shield's VCC; at 5V that line would
-over-volt GP1 when you connect the sync-in. Running the shield at 3V3 keeps the
-RX line safe and still drives MIDI OUT fine.
+Audio comes straight off the module's speaker/phones output.
 
-The shield's RX enable switch (often "S2") only connects/disconnects MIDI IN
-from the RX pin — it has no effect on MIDI OUT or playback. Leave it in the
-connected position only when you wire up sync-in. If you get silence on OUT,
-the most likely cause is GP0 landing on the RX pad instead of the TX pad.
+### Optional DIN-5 MIDI shield
 
----
+Wire by function, not silkscreen: Pico **GP0 → the shield's "1 / TX" pad**
+(drives MIDI OUT), GP1 → "0 / RX" (future sync-in), and **power the shield
+from 3V3** — the RP2350 is not 5 V-tolerant, and the shield's opto output
+idles at its VCC.
 
-## Arduino IDE setup
+### The ST7567S display (EstarDyn GM12864-59N)
+
+Wired like any 4-pin I2C panel (VCC / GND / SCL / SDA). The settings below
+are taken **verbatim from a confirmed-working RP2350 build of this exact
+panel** (no external pull-ups needed) and live in `config.h`:
+
+- **Driver profile.** The GM12864-59N works with U8g2's **`ENH_DG128064`**
+  ST7567 profile (`ST7567_PROFILE 0`, the default) at **contrast 220**. Leave
+  this alone — it is the proven driver for this module. Profiles 1 (`JLX12864`)
+  and 2 (`ENH_DG128064I`) are documented fallbacks only in case a different
+  production batch needs them.
+- **I2C address is `0x3F`**, not `0x3C` — SA0 is pulled high (U8g2's 8-bit
+  form is `0x3F << 1 = 0x7E`). Change `OLED_ADDR` to `0x3C` only if your
+  board's SA0 is low.
+- **Init order matters.** `ui.cpp` sets `Wire.setSDA/SCL/setClock(400000)`,
+  then the address, then `u8g2.begin()` — and deliberately does **not** call
+  `Wire.begin()` or a post-`begin()` `setBusClock()`. Adding either is what
+  left the panel blank in an earlier revision.
+- **Contrast is set explicitly** after `begin()` (`OLED_CONTRAST`, 220 for the
+  default profile) — the ST7567S resets far dimmer than an OLED and reads blank
+  until contrast is raised. Tune by eye if your panel looks too dark/washed.
+- A multimeter reading **~2.4 V on SDA/SCL is normal**, not a fault — it's the
+  meter averaging the live I2C traffic while the UI redraws.
+
+The COG glass also clips a few pixels at the left edge and garbles the
+rightmost columns, so the firmware confines all drawing to a safe zone
+(`SCREEN_L`/`SCREEN_R`, default columns 5–120) instead of the full 0–127
+canvas.
+
+## Building (Arduino IDE)
 
 1. Install the **arduino-pico** core (Earle Philhower). Boards Manager URL:
    `https://github.com/earlephilhower/arduino-pico/releases/download/global/package_rp2040_index.json`
-2. Install the **U8g2** library (Library Manager).
-3. Select your Pico board.
-4. **Flash Size:** choose a layout that includes a filesystem, e.g.
-   *"2MB (Sketch 1MB / FS 1MB)"*. Song save/load needs the FS partition.
-5. Open `GM_Sequencer.ino` (keep all files in the same folder) and upload.
+   (this one package covers both the RP2040 and the RP2350/Pico 2).
+2. Install **U8g2** from the Library Manager.
+3. Board: **Raspberry Pi Pico 2** (Tools → Board → "Raspberry Pi Pico 2" /
+   RP2350). **Flash Size: pick a layout with a filesystem**, e.g. *4MB
+   (Sketch 3.75MB / FS 256KB)* — a song slot is ~66 KB and there are 8 of
+   them, so even a small FS partition is plenty. (On an RP2040 Pico use a
+   *2MB (Sketch 1MB / FS 1MB)* layout instead.)
+4. Open `MedusaSAM/MedusaSAM.ino` and upload.
+
+On boot it loads a default groove (kick / snare / hats / bass / piano) —
+press **PLAY**.
 
 ---
 
 ## UI manual
 
-The control model is identical on every page, so it becomes muscle memory:
+`SHIFT` = hold the SHIFT button. The scheme is the Medusa one:
 
-| Input              | Action                                                       |
-|--------------------|--------------------------------------------------------------|
-| Rotate encoder     | move cursor / selection                                      |
-| SHIFT + rotate     | change the value at the cursor                               |
-| Click encoder      | primary action (SEQ: toggle step · SONG: run the action row) |
-| SHIFT + click      | secondary (SEQ: cycle the per-step field)                    |
-| Long-press encoder | audition / preview the selected note                         |
-| PLAY               | start / stop (SHIFT = start from top)                         |
-| PAGE               | next page (SHIFT = previous)                                  |
-| TRACK              | next track (SHIFT = previous · long-hold = clear track)      |
-| MUTE               | mute track (SHIFT = solo track)                              |
+| Input | Action |
+|-------|--------|
+| PLAY | play / stop |
+| SHIFT + PLAY | continue from where you stopped |
+| PAGE / SHIFT+PAGE | next / previous view |
+| TRACK / SHIFT+TRACK | next / previous track |
+| TRACK (hold) | clear the current track's row |
+| SHIFT + rotate | tempo, from any view |
+| rotate | move cursor / edit the selected field |
+| encoder push | toggle step (STEP) / next field (lists) |
+| encoder long-press | clear the current track's row (STEP) |
+| REC | context: tap = accent, hold+rotate = edit, lists = audition / run `[action]` rows |
 
-The status bar shows page, track, MIDI channel, mute/solo flag, transport
-(filled square = running) and BPM.
+Views (PAGE cycles): **STEP → INST → SHAPE → MIX → FX → MASTR → XPRT → SONG**
 
-### Pages
+- **STEP** — the grid, one 16-step window at a time (the cursor pages through
+  windows automatically on longer tracks; `2/4` in the corner = window 2 of 4).
+  Encoder = cursor, push = toggle. **SHIFT + push cycles the step field**
+  (NOTE · VEL · GATE · PROB · MICRO · RATCHET); **hold REC + rotate edits it**.
+  REC tap = accent, SHIFT+REC = tie. Ties on melodic tracks hold or legato-slide
+  into the next step (with SHAPE→Porta > 0 the SAM glides); ratchet subdivides
+  the step into 2–4 hits.
+- **INST** — per track: Channel (1–16, 10 = drums), Mode (Auto/Melodic/**Drums
+  on any channel** via GS), Program or drum Kit, Bank (GM/MT-32), Octave,
+  Volume, Pan, Reverb & Chorus sends, Bend range, Out (SAM / future Layer),
+  Mute. REC auditions.
+- **SHAPE** — per track sound shaping, sent live as SAM2695 NRPNs: track
+  Length, Portamento, Cutoff, Resonance, Attack, Decay, Release, Vibrato
+  rate/depth/delay, Mod wheel. Values marked `*` are at the preset default (64).
+- **MIX** — 16 volume bars: rotate = volume, push = mute, SHIFT+push = solo,
+  REC = audition.
+- **FX** — the global effects engine: Reverb type/level/time/feedback/pre-LPF,
+  Chorus type/level/rate/depth/feedback/delay/→reverb/pre-LPF.
+- **MASTR** — Master volume, Key shift (global transpose in the chip), Fine
+  tune (cents), Master pan, the **4-band EQ** (gain and frequency per band),
+  plus `[GM Reset]` `[GS Reset]` `[Panic]` `[Resend]` action rows (REC runs them).
+- **XPRT** — the expert console: send **any CC, any NRPN (MSB/LSB/value), any
+  GS SysEx parameter (address + value, checksum added for you)** to the chip.
+  Anything in the SAM2695 datasheet that doesn't have a dedicated field —
+  per-drum-note pitch/level/pan/reverb/chorus, reverb character, spatial
+  effect, and so on — is reachable from here.
+- **SONG** — Pattern (switches are **queued to the bar** while playing),
+  Bar length, Swing, Resolution (1–8 steps/beat), MIDI Clock out on/off,
+  Scale root + type, Chain length and the 16 chain slots, save Slot, and
+  `[Save]` `[Load]` `[Copy Pn]` `[Clear pat]` action rows.
 
-- **SEQ** — the step grid (hollow = empty, solid = active, halo = cursor; the
-  playhead inverts the current step while running). The bottom line shows the
-  cursor step number, its note name (or drum name on channel 10), and the
-  selected per-step field/value. SHIFT+rotate edits the selected field; SHIFT+
-  click cycles through **NOTE · VEL · GATE · PROB · MICRO**. Each track has its
-  own length (1–64) for polymetric patterns.
-- **INST** — Channel (1–16; ch 10 = GM drums), Program (GM instrument name, or
-  drum-kit name on ch 10), Bank (GM / MT-32), Octave (−3…+3), Length.
-- **MIX** — Volume (CC7), Pan (CC10, shown L/C/R), Reverb send (CC91), Chorus
-  send (CC93).
-- **FX** — global Reverb type (0–7), Chorus type (0–7), Master Volume (GM SysEx).
-- **SONG** — BPM (20–300), Swing (0–75%), Resolution (steps/beat: 1,2,3,4,6,8),
-  Clock source (INT / EXT-reserved), Slot (1–8, `*` = used), then the action
-  rows **Save**, **Load**, **GM Reset** (navigate to one and click).
+## SAM2695 parameter reference (what the firmware sends)
+
+**Dedicated UI fields:**
+
+| Parameter | MIDI message |
+|-----------|--------------|
+| Program / drum kit, Bank | CC0 + Program Change |
+| Volume / Pan / Expression | CC7 / CC10 / CC11 |
+| Reverb / Chorus send | CC91 / CC93 |
+| Mod wheel | CC1 |
+| Portamento | CC65 + CC5 |
+| Pitch-bend range | RPN 00 00 |
+| Vibrato rate / depth / delay | NRPN 01 08 / 01 09 / 01 0A |
+| TVF cutoff / resonance | NRPN 01 20 / 01 21 |
+| Envelope attack / decay / release | NRPN 01 63 / 01 64 / 01 66 |
+| Reverb program / Chorus program | CC80 / CC81 (Dream-specific) |
+| Reverb level / time / feedback / pre-LPF | GS SysEx 40 01 33 / 34 / 35 / 32 |
+| Chorus level / fb / delay / rate / depth / →rev / pre-LPF | GS 40 01 3A…3F / 39 |
+| 4-band EQ gains / frequencies | Dream NRPN 37 00–03 / 37 08–0B |
+| Master volume | Universal SysEx F0 7F 7F 04 01 00 vv F7 |
+| Master key shift / pan / fine tune | GS 40 00 05 / 06 / 00 |
+| Drums on any channel | GS "use for rhythm part" 40 1x 15 |
+| GM / GS reset | F0 7E 7F 09 01 F7 / GS reset |
+
+**Via the XPRT console** (documented in the SAM2695 datasheet):
+per-drum-note NRPNs (18 nn pitch, 1A nn level, 1C nn pan, 1D nn reverb,
+1E nn chorus), reverb character (GS 40 01 31), channel fine/coarse tune
+(RPN 00 01/02), the spatial effect and the rest of the Dream NRPN 37xx block.
+
+> Note: the CC/RPN/GS-SysEx set above is standard and safe. The Dream-specific
+> EQ NRPN numbers (37xx) follow the SAM2695 datasheet / common driver practice;
+> if a band doesn't respond on your module revision, the XPRT page lets you
+> probe the exact numbers straight from the datasheet without reflashing.
 
 ---
 
-## Feature summary
+## Architecture
 
-- 16 tracks (the GM channel ceiling; track 10 → channel 10 = drums).
-- Up to 64 steps per track, independent per-track length (polymeter).
-- Per step: on/off, note, velocity, gate %, probability %, ±12-tick micro-timing,
-  tie.
-- Swing, selectable grid resolution, 20–300 BPM, drift-free 96-PPQN timing.
-- Full SAM2695 control: program/bank, volume, pan, reverb/chorus sends, global
-  reverb/chorus type, master volume, GM reset.
-- 8 song slots in flash (LittleFS).
-- MIDI clock + transport output already emitted, ready for syncing external
-  gear; GP1/GP14 reserved for future clock-in and analog click-out.
+```
+MedusaSAM/
+  MedusaSAM.ino   core0: setup/loop (UI); core1 launched last from setup()
+  config.h        pins + dimensions + timing constants
+  model.h/.cpp    Song / Pattern / TrackCfg / Step + scales + default song
+  sam2695.h/.cpp  the complete SAM2695 MIDI driver (see reference above)
+  engine.h/.cpp   core1: 96-PPQN transport, event scheduler, reconcile pass
+  sound_source.h  note routing: SAM today, the baked-synth layer tomorrow
+  controls.h/.cpp encoder (ISR quadrature) + debounced buttons
+  ui.h/.cpp       ST7567S views + input handling
+  storage.h/.cpp  LittleFS song save/load
+  gm_names.h      GM instrument / drum / kit / FX name tables (PROGMEM)
+```
 
----
+**Timing.** core1 runs a 96-PPQN tick from a drift-free integer accumulator
+(no floats, immune to rounding drift at any BPM). Steps schedule note on/off
+*events* with swing, ±12-tick micro offsets, gate %, probability and ratchet
+subdivision; offs fire before ons on the same tick so retriggers are clean.
+Ties keep a per-track held note and hand it over ON-before-OFF, so mono/porta
+patches glide (303-style) instead of gapping. MIDI clock (0xF8, 24 PPQN) plus
+Start/Stop/Continue go out with the notes — external gear follows the groove.
 
-## Versioning
+**Cross-core rules.** core0 brings up the display and mounts flash *before*
+core1 exists — core1 is launched last, from the final line of `setup()`
+(`multicore_launch_core1_with_stack`), exactly like the reference RP2350
+build, so nothing races the I2C/flash bring-up. core0 then edits the Song and
+raises volatile request flags; core1 diff-reconciles the Song against a shadow
+every pass and sends only what changed, budgeted against the UART FIFO so a big
+edit can never stall a tick. All shared fields are single aligned 8/16-bit
+scalars — atomic on the M33, no locks anywhere. Song save/load freezes core1 in
+a RAM ISR with the Pico SDK multicore lockout for the duration of the flash
+write.
 
-Each release lives on its own git branch (e.g. `v1.0.0`) so you can always roll
-back. Create the next version on a fresh branch before editing.
+## The future baked-synth layer
+
+This firmware is deliberately light on the RP2350 so a second sound source can
+live beside the SAM2695 later — the Medusa GM sample engine rendered over I2S
+on the reserved GP15/16/17 pins. The seam is already cut:
+
+- every note event routes through `sound_source.h` by `TrackCfg::dest`
+- the INST page already has the per-track **Out: SAM / Layer** selector
+  (Layer is silent until the engine lands)
+- events arrive at the router *after* swing/micro/ratchet, so the layer will
+  groove identically to the SAM
+
+Adding the layer = implementing the three hooks in `sound_source.h` and
+spending core1's idle time (currently ~99%) rendering audio.
